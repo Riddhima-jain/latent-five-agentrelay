@@ -39,9 +39,10 @@ export interface AgentRun {
 }
 
 export interface SystemInfo {
-  arkConfigured: boolean;
-  arkBaseUrl: string;
-  arkModel: string | null;
+  modelProvider: "ark" | "gemini";
+  modelConfigured: boolean;
+  modelBaseUrl: string;
+  model: string | null;
   codexAvailable: boolean;
   codexSandboxMode: string;
   runtimeProvider: "local-process" | "container";

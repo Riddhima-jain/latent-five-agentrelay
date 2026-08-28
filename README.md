@@ -38,9 +38,17 @@ Volcengine ECS.
 - Docker, Colima, or Podman
 - A Volcengine Ark API key and endpoint that supports the Responses API
 
+Gemini is also supported through the local Responses bridge. Set
+`MODEL_PROVIDER=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` (for example,
+`gemini-3.6-flash`). The key stays server-side and is never sent to the browser.
+
 Codex CLI is included in the Runtime image and is not required on the host.
 
 ## Local browser SOP
+
+Create `.env` with only local credentials, such as `MODEL_PROVIDER`,
+`GEMINI_API_KEY`, and `GEMINI_MODEL`. The POC script loads that ignored file
+automatically; never put credentials in `.env.example`.
 
 ### 1. Check the local tools
 
@@ -70,6 +78,15 @@ Skip this step when already working from the repository root.
 ```bash
 ARK_API_KEY=your-ark-api-key \
 ARK_MODEL=ep-your-endpoint-id \
+npm run poc
+```
+
+For Gemini:
+
+```bash
+MODEL_PROVIDER=gemini \
+GEMINI_API_KEY=your-gemini-api-key \
+GEMINI_MODEL=gemini-3.6-flash \
 npm run poc
 ```
 

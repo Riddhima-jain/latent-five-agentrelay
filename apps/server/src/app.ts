@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
+import { registerGeminiResponsesAdapter } from "./gemini-responses-adapter.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -41,6 +42,8 @@ export async function createApp(
         ? ["http://localhost:5173", "http://127.0.0.1:5173"]
         : false,
   });
+
+  registerGeminiResponsesAdapter(app, config);
 
   app.addHook("onRequest", async (request, reply) => {
     if (

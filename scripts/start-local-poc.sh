@@ -4,6 +4,13 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
+if [[ -f .env ]]; then
+  set -a
+  # .env is ignored by Git and holds local development credentials.
+  source .env
+  set +a
+fi
+
 runtime_image="${CONTAINER_RUNTIME_IMAGE:-volc-agent-runtime:local}"
 runtime_base_image="${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}"
 runtime_apt_mirror="${CONTAINER_APT_MIRROR:-}"
@@ -63,9 +70,21 @@ detect_engine() {
   return 1
 }
 
-if [[ -z "${ARK_API_KEY:-}" || -z "${ARK_MODEL:-}" ]]; then
-  log "ARK_API_KEY and ARK_MODEL are required."
-  log "Example: ARK_API_KEY=key ARK_MODEL=ep-id ./scripts/start-local-poc.sh"
+model_provider="${MODEL_PROVIDER:-ark}"
+if [[ "$model_provider" == "gemini" ]]; then
+  if [[ -z "${GEMINI_API_KEY:-}" || -z "${GEMINI_MODEL:-}" ]]; then
+    log "GEMINI_API_KEY and GEMINI_MODEL are required when MODEL_PROVIDER=gemini."
+    log "Example: MODEL_PROVIDER=gemini GEMINI_API_KEY=key GEMINI_MODEL=gemini-3.6-flash ./scripts/start-local-poc.sh"
+    exit 2
+  fi
+elif [[ "$model_provider" == "ark" ]]; then
+  if [[ -z "${ARK_API_KEY:-}" || -z "${ARK_MODEL:-}" ]]; then
+    log "ARK_API_KEY and ARK_MODEL are required when MODEL_PROVIDER=ark."
+    log "Example: ARK_API_KEY=key ARK_MODEL=ep-id ./scripts/start-local-poc.sh"
+    exit 2
+  fi
+else
+  log "MODEL_PROVIDER must be ark or gemini; found $model_provider."
   exit 2
 fi
 

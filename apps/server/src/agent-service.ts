@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
-import { isArkConfigured } from "./config.js";
+import { isArkConfigured, isModelConfigured } from "./config.js";
 import { HttpError, RunCancelledError } from "./errors.js";
 import { JsonStore } from "./store.js";
 import type {
@@ -154,10 +154,12 @@ export class AgentService {
     agentId: string,
     prompt: string,
   ): Promise<{ run: AgentRun; message: Message }> {
-    if (!isArkConfigured(this.config)) {
+    if (!isModelConfigured(this.config)) {
       throw new HttpError(
         503,
-        "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
+        this.config.modelProvider === "gemini"
+          ? "Gemini is not configured. Set GEMINI_API_KEY and GEMINI_MODEL, then restart."
+          : "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
       );
     }
     const timestamp = now();
@@ -215,6 +217,17 @@ export class AgentService {
 
   async systemInfo(): Promise<Record<string, unknown>> {
     return {
+      modelProvider: this.config.modelProvider,
+      modelConfigured: isModelConfigured(this.config),
+      modelBaseUrl:
+        this.config.modelProvider === "gemini"
+          ? this.config.geminiBaseUrl
+          : this.config.arkBaseUrl,
+      model:
+        this.config.modelProvider === "gemini"
+          ? this.config.geminiModel || null
+          : this.config.arkModel || null,
+      // Retained for clients built against the starter-kit system endpoint.
       arkConfigured: isArkConfigured(this.config),
       arkBaseUrl: this.config.arkBaseUrl,
       arkModel: this.config.arkModel || null,
