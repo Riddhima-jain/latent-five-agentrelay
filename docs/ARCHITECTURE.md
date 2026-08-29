@@ -6,9 +6,17 @@ Volc Agent Launchpad is a single-node control plane for hackathon use.
 flowchart LR
     UI["React Web UI"] --> API["Fastify API"]
     API --> Service["AgentService"]
-    Service --> Store["JSON store"]
+    API --> Relay["RelayWorkflowService"]
+    Relay --> Coordinator["Coordinator"]
+    Coordinator --> Policy["Policy + payload-bound approval"]
+    Coordinator --> Runner{"AgentRunner"}
+    Relay --> RelayStore["Atomic Relay JSON store"]
+    Policy --> Executor{"ExternalActionExecutor"}
+    Executor -->|default| Mock["Mock email receipt"]
+    Executor -->|optional| Resend["Resend override inbox"]
+    Service --> Store["Launchpad JSON store"]
     Service --> Workspace["Agent workspace"]
-    Service --> Runner{"AgentRunner"}
+    Service --> Runner
     Runner -->|Local POC| Container["Disposable Runtime container"]
     Runner -->|ECS| Process["Codex child process"]
     Container --> Ark["Volcengine Ark"]
@@ -45,6 +53,7 @@ Interrupted Runs become `cancelled` after a restart.
 
 ```text
 data/launchpad.json       Agent, message, and Run metadata
+data/agentrelay.json      Relay sessions, tasks, evidence, traces, approvals, receipts
 workspaces/AgentID/       Agent-created files
 workspaces/.deleted/      Archived deleted workspaces
 codex-home/               Codex configuration and sessions
@@ -52,6 +61,21 @@ codex-home/               Codex configuration and sessions
 
 `JsonStore` serializes writes and atomically replaces one JSON file. It supports
 one process only.
+
+`RelayJsonStore` applies the same single-process atomic-write constraint to the
+middleware aggregate. Approval-ready sessions survive restart. A workflow that
+was actively running during restart is marked failed with an audit event rather
+than silently resumed or reported as successful.
+
+### AgentRelay trust boundary
+
+- Agents receive only controlled fixture handles and accepted dependency evidence.
+- Agent output is validated and recorded as untrusted proposed actions.
+- Risk metadata comes exclusively from the server-owned action registry.
+- Approval binds the action type, target, and canonical payload hash.
+- Executors accept only `ApprovedAction`; they revalidate the hash and enforce
+  an idempotency key before creating a receipt.
+- Resend credentials and the real recipient override remain server-side.
 
 ### Runtime providers
 

@@ -19,6 +19,8 @@ credentials, personal data, or exploit details in an issue.
 - Prompt-triggered command and file execution
 - Ark key available to the server and active Runtime container
 - Ark key stored in Terraform POC state
+- Relay JSON persistence is single-process and has no backup or multi-node coordination
+- Optional Resend delivery depends on an external provider and a verified sender
 
 ## Safe use
 
@@ -27,6 +29,8 @@ credentials, personal data, or exploit details in an issue.
 - Keep local use on loopback and restrict ECS Web and SSH CIDRs.
 - Add HTTPS before sending the shared token over an untrusted network.
 - Never mount production data or provide Volcengine account AK/SK to Agents.
+- Keep `EMAIL_EXECUTOR=mock` for judging. When testing Resend, use a scoped key
+  and a team-owned `RESEND_TO_OVERRIDE`; never use a customer address.
 - Stop the POC, destroy test resources, and revoke keys after the event.
 
 Codex uses `workspace-write` when Landlock is available. On unsupported kernels,
