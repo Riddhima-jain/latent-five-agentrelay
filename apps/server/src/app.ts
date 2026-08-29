@@ -8,6 +8,7 @@ import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 import { registerGeminiResponsesAdapter } from "./gemini-responses-adapter.js";
+import { DemoRelaySessionService, type RelaySessionReader } from "./application/relay-session-service.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -23,10 +24,14 @@ const updateAgentBody = createAgentBody.partial().refine(
 const messageBody = z.object({
   content: z.string().trim().min(1).max(50_000),
 });
+const relaySessionParams = z.object({ id: z.string().trim().min(1).max(120) });
+const relayApprovalParams = z.object({ id: z.string().trim().min(1).max(160) });
+const relayDecisionBody = z.object({ decision: z.enum(["approve", "deny"]) }).strict();
 
 export async function createApp(
   config: AppConfig,
   service: AgentService,
+  relayService: RelaySessionReader = new DemoRelaySessionService(),
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
@@ -129,6 +134,17 @@ export async function createApp(
   app.get("/api/runs/:id", async (request) => {
     const { id } = runIdParams.parse(request.params);
     return { run: service.getRun(id) };
+  });
+
+  app.get("/api/relay/sessions/:id", async (request) => {
+    const { id } = relaySessionParams.parse(request.params);
+    return { session: relayService.getSession(id) };
+  });
+
+  app.post("/api/relay/approvals/:id", async (request) => {
+    const { id } = relayApprovalParams.parse(request.params);
+    const { decision } = relayDecisionBody.parse(request.body);
+    return { session: relayService.decideApproval(id, decision) };
   });
 
   if (config.nodeEnv === "production") {

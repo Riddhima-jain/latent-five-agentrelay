@@ -31,6 +31,21 @@ Volcengine ECS.
 - Disposable Docker, Colima, or Podman container for each local turn
 - Docker and Terraform deployment paths for Volcengine ECS
 
+## AgentRelay middleware track
+
+This project extends the starter platform with an AgentRelay workflow and
+approval boundary. Research, finance, strategy, and outreach tasks are routed
+by server-owned capabilities. A proposed `SEND_EMAIL` action is classified by
+the backend policy registry and cannot execute until a human approves its exact
+payload-bound hash.
+
+The web dashboard reads the demo aggregate from
+`GET /api/relay/sessions/demo`. It submits only `approve` or `deny` to
+`POST /api/relay/approvals/:id`; action contents and risk metadata are not
+accepted from the browser. Approval and denial events are returned in the
+session trace. This demo adapter is currently in-memory and resets when the
+server restarts.
+
 ## Requirements
 
 - Node.js 22+
