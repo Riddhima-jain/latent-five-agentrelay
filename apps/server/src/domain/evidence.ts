@@ -11,3 +11,12 @@ export interface EvidenceRecord {
   sourceRefs: string[];
   createdAt: string;
 }
+
+/**
+ * Trust-owned outcome for deciding whether provisional evidence may propagate.
+ * `accepted` means eligible for the declared workflow path, not factually true.
+ */
+export interface EvidenceAcceptance {
+  status: Extract<EvidenceStatus, "accepted" | "rejected">;
+  reasons: string[];
+}
