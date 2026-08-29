@@ -4,6 +4,29 @@ export type AutomationDecision =
   | "RECOMMEND_ONLY"
   | "DENY";
 
+/** Action names are untrusted until resolved against the server-side registry. */
+export type RegisteredActionType =
+  | "CREATE_INTERNAL_DRAFT"
+  | "SEND_EMAIL"
+  | "UPDATE_PRICING"
+  | "DELETE_PROTECTED_DATA";
+
+export type ActionImpact = "low" | "high" | "critical";
+export type ActionReversibility = "reversible" | "irreversible";
+export type ActionTargetScope = "internal" | "external" | "protected";
+
+/**
+ * Trusted metadata. It must be selected by the server registry, never accepted
+ * from an agent-provided action payload.
+ */
+export interface ActionRiskMetadata {
+  impact: ActionImpact;
+  reversibility: ActionReversibility;
+  targetScope: ActionTargetScope;
+  requiredPermission: import("./capability.js").AgentPermission;
+  prohibited: boolean;
+}
+
 export type ActionExecutionStatus = "pending" | "executing" | "succeeded" | "failed";
 
 /** A proposed action is untrusted until the server derives its policy decision. */
