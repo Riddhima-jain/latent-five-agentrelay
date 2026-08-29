@@ -1,4 +1,4 @@
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type { Agent, AgentRun, Message, RelaySession, SystemInfo } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -78,4 +78,10 @@ export const api = {
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
+  relaySession: () => request<{ session: RelaySession }>("/api/relay/sessions/demo"),
+  decideApproval: (id: string, decision: "approve" | "deny") =>
+    request<{ session: RelaySession }>("/api/relay/approvals/" + id, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    }),
 };

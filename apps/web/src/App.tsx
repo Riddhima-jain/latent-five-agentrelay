@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
 import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import AgentRelayDashboard from "./AgentRelayDashboard";
+import BrandLogo from "./BrandLogo";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -49,6 +51,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
   const [authInput, setAuthInput] = useState("");
+  const [view, setView] = useState<"relay" | "playground">("relay");
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
@@ -310,15 +313,7 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">A</div>
-          <div>
-            <strong>Agent Launchpad</strong>
-            <span>
-              {system?.runtimeProvider === "container"
-                ? "Local container · Codex CLI"
-                : "ECS / Docker · Codex CLI"}
-            </span>
-          </div>
+          <BrandLogo />
         </div>
 
         <button
@@ -326,10 +321,17 @@ export default function App() {
           onClick={() => {
             setForm(emptyForm);
             setShowCreate(true);
+            setView("playground");
           }}
         >
           <span>＋</span> Create Agent
         </button>
+
+        <div className="view-switcher" aria-label="Workspace view">
+          <button className={view === "playground" ? "active" : ""} onClick={() => setView("playground")}><span>♙</span> Agents</button>
+          <button className={view === "playground" ? "active" : ""} onClick={() => setView("playground")}><span>‹/›</span> Playground</button>
+          <button className={view === "relay" ? "active" : ""} onClick={() => setView("relay")}><span>⌁</span> AgentRelay</button>
+        </div>
 
         <div className="sidebar-label">
           <span>Your Agents</span>
@@ -340,7 +342,10 @@ export default function App() {
             <button
               className={"agent-card " + (agent.id === selectedId ? "selected" : "")}
               key={agent.id}
-              onClick={() => setSelectedId(agent.id)}
+              onClick={() => {
+                setSelectedId(agent.id);
+                setView("playground");
+              }}
             >
               <div className="agent-avatar">{agent.name.slice(0, 1).toUpperCase()}</div>
               <div className="agent-card-copy">
@@ -369,6 +374,7 @@ export default function App() {
       </aside>
 
       <main className="main">
+        {view === "relay" ? <AgentRelayDashboard /> : <>
         {!system?.modelConfigured || !system?.codexAvailable ? (
           <div className="config-banner">
             <span>!</span>
@@ -602,6 +608,7 @@ export default function App() {
             </button>
           </div>
         )}
+        </>}
       </main>
 
       {showCreate && (

@@ -49,3 +49,63 @@ export interface SystemInfo {
   containerEngine: string | null;
   runtime: string;
 }
+
+export type RelayTaskStatus =
+  | "waiting"
+  | "ready"
+  | "running"
+  | "completed"
+  | "failed"
+  | "approval_required"
+  | "denied";
+
+export interface RelayTask {
+  id: string;
+  title: string;
+  agentId: string;
+  agentName: string;
+  status: RelayTaskStatus;
+  dependsOn: string[];
+  summary?: string;
+  durationMs?: number;
+}
+
+export type RelayDecision =
+  | "AUTO_EXECUTE"
+  | "REQUIRE_APPROVAL"
+  | "RECOMMEND_ONLY"
+  | "DENY";
+
+export interface RelayApproval {
+  id: string;
+  actionId: string;
+  actionHash: string;
+  status: "pending" | "approved" | "denied" | "invalidated";
+  decision: RelayDecision;
+  actionType: "SEND_EMAIL";
+  recipient: string;
+  subject: string;
+  body: string;
+  rationale: string;
+}
+
+export interface RelayTraceEvent {
+  id: string;
+  type: string;
+  timestamp: string;
+  taskId?: string;
+  agentId?: string;
+  summary: string;
+  tone: "neutral" | "success" | "warning" | "danger";
+}
+
+export interface RelaySession {
+  id: string;
+  traceId: string;
+  title: string;
+  status: "running" | "awaiting_approval" | "completed" | "failed" | "degraded";
+  startedAt: string;
+  tasks: RelayTask[];
+  approval: RelayApproval | null;
+  trace: RelayTraceEvent[];
+}
