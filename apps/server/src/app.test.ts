@@ -106,4 +106,15 @@ describe("HTTP boundary", () => {
     expect((await app.inject({ method: "GET", url: `/api/relay/sessions/${second.json().session.id}` })).json().session.status).toBe("awaiting_approval");
     await app.close();
   });
+
+  it("lists Relay sessions and rejects unknown scenario controls", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
+    const listed = await app.inject({ method: "GET", url: "/api/relay/sessions" });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().sessions.length).toBeGreaterThan(0);
+
+    const invalid = await app.inject({ method: "POST", url: "/api/relay/sessions", payload: { scenario: "fake-success" } });
+    expect(invalid.statusCode).toBe(400);
+    await app.close();
+  });
 });

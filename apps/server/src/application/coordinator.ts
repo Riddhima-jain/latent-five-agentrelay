@@ -43,6 +43,7 @@ export class Coordinator {
     private readonly ports: CoordinatorPorts,
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly knownCapabilities: ReadonlySet<string> = new Set(agents.flatMap((agent) => agent.capabilities)),
+    private readonly resourcesForTask: (task: AgentTask) => readonly string[] = () => [],
   ) {}
 
   async start(session: SharedSession): Promise<CoordinatorStartResult> {
@@ -122,7 +123,8 @@ export class Coordinator {
     if (!this.session) throw new Error("Coordinator has not been started.");
     const evidence = await this.ports.evidenceStore.listForTasks(task.dependsOn);
     return {
-      sessionId: this.session.id, taskId: task.id, goal: this.session.goal, constraints: [], allowedResources: [],
+      sessionId: this.session.id, taskId: task.id, goal: this.session.goal, constraints: [],
+      allowedResources: [...this.resourcesForTask(task)],
       dependencyEvidence: evidence.filter((record) => record.sessionId === this.session?.id && record.status === "accepted"),
     };
   }

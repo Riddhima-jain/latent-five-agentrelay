@@ -66,6 +66,9 @@ export function buildWorkflowPrompt(
     '{"summary":"string","evidence":[{"claim":"string","sourceRefs":["string"]}],"proposedActions":[{"type":"string","target":"string","payload":{},"rationale":"string optional"}]}',
     "",
     `Current task: ${JSON.stringify({ id: task.id, title: task.title, requiredCapability: task.requiredCapability })}`,
+    ...(task.requiredPermissions.includes("external_write") ? [
+      'For this outreach task, propose exactly one SEND_EMAIL action. Its payload must be {"recipient":"string","subject":"string","body":"string"}. Do not send it yourself.',
+    ] : []),
     `Context Capsule: ${JSON.stringify({ goal: context.goal, constraints: context.constraints, dependencyEvidence: context.dependencyEvidence })}`,
     `Controlled fixture paths: ${JSON.stringify(materializedFixtures)}`,
   ].join("\n");
