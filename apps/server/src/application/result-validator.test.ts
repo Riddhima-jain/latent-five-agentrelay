@@ -27,4 +27,12 @@ describe("validateAgentExecutionResult", () => {
       proposedActions: [{ type: "SEND_EMAIL", target: "customer-a", payload: {}, impact: "low" }],
     })).toMatchObject({ valid: false, code: "AGENT_RESULT_INVALID" });
   });
+
+  it("rejects a result when any required contract field is missing", () => {
+    expect(validateAgentExecutionResult({
+      summary: "Incomplete result",
+      evidence: [],
+      // proposedActions deliberately omitted
+    })).toMatchObject({ valid: false, code: "AGENT_RESULT_INVALID" });
+  });
 });

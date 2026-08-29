@@ -20,6 +20,22 @@ describe("evidence acceptance", () => {
   });
 
   it("rejects evidence from the wrong producer or without source provenance", () => {
-    expect(assessEvidence({ ...record, producerAgentId: "other-agent", sourceRefs: [] }, task)).toMatchObject({ status: "rejected" });
+    expect(assessEvidence({ ...record, producerAgentId: "other-agent", sourceRefs: [] }, task)).toEqual({
+      status: "rejected",
+      reasons: [
+        "Evidence producer does not match the assigned agent",
+        "Evidence requires at least one valid source reference",
+      ],
+    });
+  });
+
+  it("rejects evidence from failed or unrelated tasks", () => {
+    expect(assessEvidence({ ...record, taskId: "unrelated" }, { ...task, status: "failed" })).toEqual({
+      status: "rejected",
+      reasons: [
+        "Evidence does not belong to the producer task",
+        "Producer task did not complete successfully",
+      ],
+    });
   });
 });

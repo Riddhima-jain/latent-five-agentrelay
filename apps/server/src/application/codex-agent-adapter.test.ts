@@ -44,11 +44,27 @@ describe("CodexAgentAdapter", () => {
     await adapter.execute("research-agent", task, context);
     await adapter.execute("research-agent", { ...task, sessionId: "workflow-2" }, { ...context, sessionId: "workflow-2" });
     expect(requests.map((request) => request.threadId)).toEqual([null, "workflow-thread", null]);
+    expect(requests[2]?.prompt).not.toContain("workflow-1");
   });
 
   it("fails closed when Codex returns prose or a malformed structured result", async () => {
     const { runner } = runnerWith("Here is my answer: {});");
     const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
     await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("AGENT_RESULT_INVALID");
+  });
+
+  it("fails closed when the JSON result omits a required field", async () => {
+    const { runner } = runnerWith(JSON.stringify({ summary: "Incomplete", evidence: [] }));
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
+    await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("AGENT_RESULT_INVALID");
+  });
+
+  it("propagates an execution failure without manufacturing evidence", async () => {
+    const runner: AgentRunner = {
+      async run() { throw new Error("controlled runtime failure"); },
+      async cancel() { return false; }, async isAvailable() { return true; },
+    };
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
+    await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("controlled runtime failure");
   });
 });
