@@ -42,4 +42,19 @@ describe("DemoRelaySessionService", () => {
     expect(denied.tasks.find((task) => task.id === "outreach")?.status).toBe("denied");
     expect(denied.trace.at(-1)?.type).toBe("approval.denied");
   });
+
+  it("creates independent sessions with isolated approval lifecycles", () => {
+    const ids = ["first-session-id", "second-session-id"];
+    const service = new DemoRelaySessionService(clock, () => ids.shift()!);
+    const first = service.createSession();
+    const second = service.createSession();
+
+    expect(first.id).not.toBe(second.id);
+    expect(first.approval?.id).not.toBe(second.approval?.id);
+
+    service.decideApproval(first.approval!.id, "approve");
+    expect(service.getSession(first.id).status).toBe("completed");
+    expect(service.getSession(second.id).status).toBe("awaiting_approval");
+    expect(service.getSession(second.id).approval?.status).toBe("pending");
+  });
 });

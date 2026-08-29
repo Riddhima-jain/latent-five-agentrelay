@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AutomationDecision, ProposedAction } from "../domain/action.js";
 import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-workflow.js";
 import { HttpError } from "../errors.js";
@@ -52,18 +53,47 @@ export interface RelaySessionView {
 }
 
 export interface RelaySessionReader {
+  createSession(): RelaySessionView;
   getSession(id: string): RelaySessionView;
   decideApproval(approvalId: string, decision: "approve" | "deny"): RelaySessionView;
 }
 
-const SESSION_ID = "demo";
-const ACTION_ID = "send-email-demo";
-
-/**
- * HTTP-facing demo aggregate. Policy and approval remain server-owned: callers
- * may choose approve or deny, but cannot supply action contents or risk claims.
- */
+/** Owns independent in-memory demo sessions while policy stays server-controlled. */
 export class DemoRelaySessionService implements RelaySessionReader {
+  private readonly sessions = new Map<string, RelaySessionAggregate>();
+
+  constructor(
+    private readonly now: () => string = () => new Date().toISOString(),
+    private readonly createId: () => string = () => randomUUID(),
+  ) {
+    this.addSession("demo");
+  }
+
+  createSession(): RelaySessionView {
+    const id = `STR-${this.createId().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+    return this.addSession(id).snapshot();
+  }
+
+  getSession(id: string): RelaySessionView {
+    const session = this.sessions.get(id);
+    if (session === undefined) throw new HttpError(404, `Relay session not found: ${id}`);
+    return session.snapshot();
+  }
+
+  decideApproval(approvalId: string, decision: "approve" | "deny"): RelaySessionView {
+    const session = [...this.sessions.values()].find((candidate) => candidate.approvalId === approvalId);
+    if (session === undefined) throw new HttpError(404, `Relay approval not found: ${approvalId}`);
+    return session.decide(decision);
+  }
+
+  private addSession(id: string): RelaySessionAggregate {
+    const session = new RelaySessionAggregate(id, this.now);
+    this.sessions.set(id, session);
+    return session;
+  }
+}
+
+class RelaySessionAggregate {
   private readonly approvals: InMemoryApprovalService;
   private readonly action: ProposedAction;
   private readonly policyDecision: AutomationDecision;
@@ -72,12 +102,15 @@ export class DemoRelaySessionService implements RelaySessionReader {
   private outcome: "pending" | "approved" | "denied" = "pending";
   private eventSequence = 0;
 
-  constructor(private readonly now: () => string = () => new Date().toISOString()) {
+  constructor(
+    private readonly sessionId: string,
+    private readonly now: () => string,
+  ) {
     this.approvals = new InMemoryApprovalService(now);
     this.startedAt = now();
     this.action = {
-      id: ACTION_ID,
-      sessionId: SESSION_ID,
+      id: `send-email-${sessionId}`,
+      sessionId,
       taskId: "outreach",
       producerAgentId: "outreach-agent",
       type: "SEND_EMAIL",
@@ -104,26 +137,21 @@ export class DemoRelaySessionService implements RelaySessionReader {
     this.trace = this.initialTrace();
   }
 
-  getSession(id: string): RelaySessionView {
-    if (id !== SESSION_ID) throw new HttpError(404, `Relay session not found: ${id}`);
-    return this.snapshot();
+  get approvalId(): string {
+    return this.approvals.getApproval(this.action.id)!.id;
   }
 
-  decideApproval(approvalId: string, decision: "approve" | "deny"): RelaySessionView {
-    const current = this.approvals.getApproval(ACTION_ID);
-    if (current === undefined || current.id !== approvalId) {
-      throw new HttpError(404, `Relay approval not found: ${approvalId}`);
-    }
+  decide(decision: "approve" | "deny"): RelaySessionView {
     try {
       if (decision === "approve") {
-        this.approvals.approveAction(ACTION_ID);
+        this.approvals.approveAction(this.action.id);
         const authorization = this.approvals.authorize(this.action);
         if (!authorization.executable) throw new Error(authorization.reason);
         this.outcome = "approved";
         this.appendTrace("approval.granted", "Human approved the payload-bound action", "success");
         this.appendTrace("action.executed", "Protected email action released to the trusted executor", "success");
       } else {
-        this.approvals.denyAction(ACTION_ID);
+        this.approvals.denyAction(this.action.id);
         this.outcome = "denied";
         this.appendTrace("approval.denied", "Human denied the protected action", "danger");
       }
@@ -133,13 +161,11 @@ export class DemoRelaySessionService implements RelaySessionReader {
     return this.snapshot();
   }
 
-  private snapshot(): RelaySessionView {
-    const record = this.approvals.getApproval(ACTION_ID)!;
+  snapshot(): RelaySessionView {
+    const record = this.approvals.getApproval(this.action.id)!;
     const payload = this.action.payload as { recipient: string; subject: string; body: string };
     const taskState: Record<string, RelayTaskStatus> = {
-      research: "completed",
-      finance: "completed",
-      strategy: "completed",
+      research: "completed", finance: "completed", strategy: "completed",
       outreach: this.outcome === "pending" ? "approval_required" : this.outcome === "approved" ? "completed" : "denied",
     };
     const summaries: Record<string, string> = {
@@ -149,25 +175,27 @@ export class DemoRelaySessionService implements RelaySessionReader {
       outreach: this.outcome === "approved" ? "Approved email executed by the trusted action service." : this.outcome === "denied" ? "Human reviewer denied the proposed email." : "Email drafted. External write is paused for human approval.",
     };
     return {
-      id: SESSION_ID,
-      traceId: "trace-sales-recovery-demo",
+      id: this.sessionId,
+      traceId: `trace-${this.sessionId}`,
       title: "Workflow Overview",
       status: this.outcome === "pending" ? "awaiting_approval" : this.outcome === "approved" ? "completed" : "degraded",
       startedAt: this.startedAt,
       tasks: SALES_RECOVERY_TASKS.map((definition, index) => {
         const agent = SALES_RECOVERY_AGENTS.find((candidate) => candidate.capabilities.includes(definition.requiredCapability));
         return {
-          id: definition.id,
-          title: definition.title,
-          agentId: agent?.agentId ?? "unassigned",
-          agentName: agent?.name ?? "Unassigned",
-          status: taskState[definition.id] ?? "waiting",
-          dependsOn: [...definition.dependsOn],
+          id: definition.id, title: definition.title,
+          agentId: agent?.agentId ?? "unassigned", agentName: agent?.name ?? "Unassigned",
+          status: taskState[definition.id] ?? "waiting", dependsOn: [...definition.dependsOn],
           summary: summaries[definition.id] ?? "Task status is available in the trace.",
           ...(index < 3 ? { durationMs: [360_000, 480_000, 420_000][index]! } : {}),
         };
       }),
-      approval: { id: record.id, actionId: record.actionId, actionHash: record.payloadHash, status: record.status, decision: this.policyDecision, actionType: "SEND_EMAIL", recipient: payload.recipient, subject: payload.subject, body: payload.body, rationale: this.action.rationale ?? "External action requires approval." },
+      approval: {
+        id: record.id, actionId: record.actionId, actionHash: record.payloadHash,
+        status: record.status, decision: this.policyDecision, actionType: "SEND_EMAIL",
+        recipient: payload.recipient, subject: payload.subject, body: payload.body,
+        rationale: this.action.rationale ?? "External action requires approval.",
+      },
       trace: this.trace.map((event) => ({ ...event })),
     };
   }
@@ -189,6 +217,6 @@ export class DemoRelaySessionService implements RelaySessionReader {
 
   private event(type: string, summary: string, tone: RelayTraceView["tone"], taskId?: string, agentId?: string): RelayTraceView {
     this.eventSequence += 1;
-    return { id: `relay-event-${this.eventSequence}-${type}`, type, timestamp: this.now(), summary, tone, ...(taskId ? { taskId } : {}), ...(agentId ? { agentId } : {}) };
+    return { id: `${this.sessionId}-event-${this.eventSequence}`, type, timestamp: this.now(), summary, tone, ...(taskId ? { taskId } : {}), ...(agentId ? { agentId } : {}) };
   }
 }

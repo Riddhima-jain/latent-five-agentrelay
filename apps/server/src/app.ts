@@ -141,6 +141,10 @@ export async function createApp(
     return { session: relayService.getSession(id) };
   });
 
+  app.post("/api/relay/sessions", async (_request, reply) => {
+    return reply.code(201).send({ session: relayService.createSession() });
+  });
+
   app.post("/api/relay/approvals/:id", async (request) => {
     const { id } = relayApprovalParams.parse(request.params);
     const { decision } = relayDecisionBody.parse(request.body);

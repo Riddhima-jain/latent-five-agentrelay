@@ -3,6 +3,7 @@ import { api, ApiError } from "./api";
 import type { RelaySession, RelayTask } from "./types";
 
 const ago = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString();
+const relaySessionStorageKey = "agentrelay.activeSessionId";
 
 const demoSession: RelaySession = {
   id: "STR-2025-05-14-001", traceId: "trace-8f31a2", title: "Workflow Overview", status: "awaiting_approval", startedAt: ago(900),
@@ -58,7 +59,31 @@ export default function AgentRelayDashboard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { void api.relaySession().then(({ session: value }) => setSession(value)).catch((reason) => { if (reason instanceof ApiError && reason.status === 404) setFixtureMode(true); else setError(reason instanceof Error ? reason.message : String(reason)); }); }, []);
+  useEffect(() => {
+    const savedId = window.localStorage.getItem(relaySessionStorageKey) ?? "demo";
+    void api.relaySession(savedId).then(({ session: value }) => setSession(value)).catch(async (reason) => {
+      if (reason instanceof ApiError && reason.status === 404 && savedId !== "demo") {
+        window.localStorage.removeItem(relaySessionStorageKey);
+        try { setSession((await api.relaySession()).session); }
+        catch (fallbackReason) { setError(fallbackReason instanceof Error ? fallbackReason.message : String(fallbackReason)); }
+      } else if (reason instanceof ApiError && reason.status === 404) setFixtureMode(true);
+      else setError(reason instanceof Error ? reason.message : String(reason));
+    });
+  }, []);
+
+  const createWorkflow = async () => {
+    setBusy(true); setError(null);
+    try {
+      const result = await api.createRelaySession();
+      setSession(result.session);
+      window.localStorage.setItem(relaySessionStorageKey, result.session.id);
+      setFixtureMode(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const decide = async (decision: "approve" | "deny") => {
     if (!session.approval) return;
@@ -72,9 +97,9 @@ export default function AgentRelayDashboard() {
   return (
     <div className="relay-page relay-reference-page">
       <header className="relay-hero reference-hero">
-        <div><h1>Workflow Overview</h1><div className="session-line">Session: <strong>{session.id}</strong><button aria-label="Copy session ID">▢</button><span className="active-badge">● Active</span></div></div>
-        <dl className="session-metadata"><div><dt>Started</dt><dd>May 14, 2025 9:12 AM</dd></div><div><dt>Triggered by</dt><dd>Strategy Agent</dd></div><div><dt>Run mode</dt><dd>Semi-Autonomous</dd></div></dl>
-        <button className="button button-outline">View Session Details ↗</button>
+        <div><h1>Workflow Overview</h1><div className="session-line">Session: <strong>{session.id}</strong><button aria-label="Copy session ID" onClick={() => void navigator.clipboard?.writeText(session.id)}>▢</button><span className={`active-badge active-badge-${session.status}`}>● {session.status.replaceAll("_", " ")}</span></div></div>
+        <dl className="session-metadata"><div><dt>Started</dt><dd>{new Date(session.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</dd></div><div><dt>Triggered by</dt><dd>Strategy Agent</dd></div><div><dt>Run mode</dt><dd>Semi-Autonomous</dd></div></dl>
+        <div className="workflow-header-actions"><button className="button button-outline">View Session Details ↗</button><button className="button button-primary" disabled={busy} onClick={createWorkflow}>{busy ? "Starting…" : "+ New Workflow"}</button></div>
       </header>
       {fixtureMode && <div className="relay-fixture-banner"><strong>Preview data</strong> Live Relay endpoints are pending; approval controls affect this preview only.</div>}
       {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
