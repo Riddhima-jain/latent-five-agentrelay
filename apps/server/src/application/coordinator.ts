@@ -5,6 +5,7 @@ import type { SharedSession } from "../domain/session.js";
 import type { AgentTask, WorkflowTaskDefinition } from "../domain/task.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
 import { routeTaskByCapability } from "./capability-router.js";
+import { applyEvidenceAcceptance } from "./evidence-acceptance.js";
 import type { DagValidationError } from "./dag-validator.js";
 import { validateTaskDag } from "./dag-validator.js";
 import { scheduleReadyTasks } from "./scheduler.js";
@@ -97,11 +98,12 @@ export class Coordinator {
       const context = await this.buildContext(running);
       await this.trace("agent.invoked", { taskId: task.id, agentId: route.agentId });
       const result = await this.ports.agentExecutor.execute(route.agentId, running, context);
-      await this.persistEvidence(running, route.agentId, result.evidence);
+      const completed = await this.persistTransition(running, "completed", "task.completed");
+      await this.persistEvidence(completed, route.agentId, result.evidence);
       await Promise.all(result.proposedActions.map((action, index) => this.trace("action.proposed", {
         taskId: task.id, agentId: route.agentId, metadata: { actionIndex: index, actionType: action.type, target: action.target },
       })));
-      return this.persistTransition(running, "completed", "task.completed");
+      return completed;
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Agent execution failed";
       if (running.attempt < running.maxAttempts) {
@@ -127,10 +129,11 @@ export class Coordinator {
 
   private async persistEvidence(task: AgentTask, agentId: string, evidence: readonly { claim: string; sourceRefs: string[] }[]): Promise<void> {
     await Promise.all(evidence.map((item, index) => {
-      const record: EvidenceRecord = {
+      const provisional: EvidenceRecord = {
         id: `${task.sessionId}:${task.id}:evidence:${index + 1}`, sessionId: task.sessionId, taskId: task.id,
         producerAgentId: agentId, status: "provisional", claim: item.claim, sourceRefs: [...item.sourceRefs], createdAt: this.now(),
       };
+      const record = applyEvidenceAcceptance(provisional, task);
       return Promise.all([
         this.ports.evidenceStore.save(record),
         this.trace("evidence.created", { taskId: task.id, agentId, metadata: { evidenceId: record.id } }),
