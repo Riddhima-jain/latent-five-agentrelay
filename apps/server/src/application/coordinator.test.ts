@@ -57,7 +57,7 @@ describe("Coordinator", () => {
     const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
     await coordinator.start(session());
     await coordinator.tick();
-    harness.savedEvidence[0]!.status = "accepted";
+    harness.savedEvidence[1]!.status = "rejected";
     harness.savedEvidence.push({ ...harness.savedEvidence[1]!, id: "other-session", sessionId: "other", status: "accepted" });
     await coordinator.tick();
     const strategy = harness.calls.find((call) => call.taskId === "strategy")!;
@@ -65,13 +65,13 @@ describe("Coordinator", () => {
     expect(strategy.evidence[0]!.taskId).toBe("research");
   });
 
-  it("persists provisional evidence and correlated task, agent, and session trace events", async () => {
+  it("persists accepted evidence and correlated task, agent, and session trace events", async () => {
     const harness = makePorts();
     const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
     await coordinator.start(session());
     await coordinator.tick(); await coordinator.tick(); await coordinator.tick();
     expect(harness.savedEvidence).toHaveLength(4);
-    expect(harness.savedEvidence.every((record) => record.status === "provisional")).toBe(true);
+    expect(harness.savedEvidence.every((record) => record.status === "accepted")).toBe(true);
     expect(harness.traces.map((event) => event.type)).toEqual(expect.arrayContaining([
       "task.created", "task.ready", "agent.selected", "agent.invoked", "evidence.created", "task.completed", "session.completed",
     ]));
