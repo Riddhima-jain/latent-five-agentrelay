@@ -34,6 +34,7 @@ export class Coordinator {
   private tasks: AgentTask[] = [];
   private session: SharedSession | null = null;
   private latestSnapshot: CoordinatorSnapshot | null = null;
+  private tickInFlight: Promise<CoordinatorSnapshot> | null = null;
 
   constructor(
     private readonly definitions: readonly WorkflowTaskDefinition[],
@@ -64,7 +65,15 @@ export class Coordinator {
   }
 
   /** Executes every currently ready task concurrently, then reconciles downstream readiness. */
-  async tick(): Promise<CoordinatorSnapshot> {
+  tick(): Promise<CoordinatorSnapshot> {
+    if (this.tickInFlight) return this.tickInFlight;
+    this.tickInFlight = this.runTick().finally(() => {
+      this.tickInFlight = null;
+    });
+    return this.tickInFlight;
+  }
+
+  private async runTick(): Promise<CoordinatorSnapshot> {
     const readyTasks = this.getSnapshot().tasks.filter((task) => task.status === "ready");
     const updatedTasks = await Promise.all(readyTasks.map((task) => this.executeTask(task)));
     const updatedById = new Map(updatedTasks.map((task) => [task.id, task]));
@@ -94,8 +103,15 @@ export class Coordinator {
       })));
       return this.persistTransition(running, "completed", "task.completed");
     } catch (error) {
+      const reason = error instanceof Error ? error.message : "Agent execution failed";
+      if (running.attempt < running.maxAttempts) {
+        return this.persistTransition(running, "ready", "retry.scheduled", {
+          attempt: running.attempt,
+          reason,
+        });
+      }
       return this.persistTransition(running, "failed", "task.failed", {
-        reason: error instanceof Error ? error.message : "Agent execution failed",
+        reason,
       });
     }
   }

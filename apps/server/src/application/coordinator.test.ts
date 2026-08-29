@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-workflow.js";
+import type { AgentManifest } from "../domain/capability.js";
 import type { EvidenceRecord } from "../domain/evidence.js";
 import type { CoordinatorPorts } from "./coordinator.js";
 import { Coordinator } from "./coordinator.js";
@@ -77,13 +78,81 @@ describe("Coordinator", () => {
     expect(harness.getSession().status).toBe("completed");
   });
 
-  it("fails the session and keeps downstream tasks blocked when an executor fails", async () => {
+  it("coalesces overlapping ticks so each ready task executes only once", async () => {
+    let releaseExecution: () => void = () => {};
+    let markAgentStarted: () => void = () => {};
+    const agentStarted = new Promise<void>((resolve) => { markAgentStarted = resolve; });
+    const release = new Promise<void>((resolve) => { releaseExecution = resolve; });
+    const harness = makePorts({ agentExecutor: { async execute(agentId, task, context) {
+      harness.calls.push({ agentId, taskId: task.id, evidence: context.dependencyEvidence });
+      markAgentStarted();
+      await release;
+      return { summary: "ok", evidence: [], proposedActions: [] };
+    } } });
+    const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
+    await coordinator.start(session());
+
+    const firstTick = coordinator.tick();
+    await agentStarted;
+    const secondTick = coordinator.tick();
+    releaseExecution();
+    await Promise.all([firstTick, secondTick]);
+
+    expect(harness.calls).toHaveLength(2);
+    expect(harness.calls.map((call) => call.taskId).sort()).toEqual(["finance", "research"]);
+  });
+
+  it("retries a failed task once, preserving dependency blocking until it succeeds", async () => {
+    let researchAttempts = 0;
+    const harness = makePorts({ agentExecutor: { async execute(_agentId, task) {
+      if (task.id === "research" && researchAttempts++ === 0) throw new Error("temporary failure");
+      return { summary: "ok", evidence: [], proposedActions: [] };
+    } } });
+    const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
+    await coordinator.start(session());
+
+    const retryScheduled = await coordinator.tick();
+    expect(statusOf(retryScheduled, "research")).toBe("ready");
+    expect(statusOf(retryScheduled, "strategy")).toBe("blocked");
+    expect(harness.getSession().status).toBe("running");
+
+    const recovered = await coordinator.tick();
+    expect(statusOf(recovered, "research")).toBe("completed");
+    expect(statusOf(recovered, "strategy")).toBe("ready");
+    expect(harness.traces.map((event) => event.type)).toContain("retry.scheduled");
+  });
+
+  it("marks unavailable work unassigned and blocks its descendants", async () => {
+    const agents: AgentManifest[] = SALES_RECOVERY_AGENTS.map((agent) =>
+      agent.agentId === "finance-agent" ? { ...agent, runnable: false } : agent,
+    );
+    const harness = makePorts();
+    const coordinator = new Coordinator(
+      SALES_RECOVERY_TASKS,
+      agents,
+      harness.ports,
+      fixedClock,
+      new Set(SALES_RECOVERY_AGENTS.flatMap((agent) => agent.capabilities)),
+    );
+    await coordinator.start(session());
+    const snapshot = await coordinator.tick();
+
+    expect(statusOf(snapshot, "finance")).toBe("unassigned");
+    expect(statusOf(snapshot, "strategy")).toBe("blocked");
+    expect(snapshot.blockedByFailedDependencyTaskIds).toEqual(["strategy"]);
+    expect(harness.getSession().status).toBe("failed");
+  });
+
+  it("fails the session only after a task exhausts its retry attempts", async () => {
     const harness = makePorts({ agentExecutor: { async execute(_agentId, task) {
       if (task.id === "research") throw new Error("controlled failure");
       return { summary: "ok", evidence: [], proposedActions: [] };
     } } });
     const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
     await coordinator.start(session());
+    const retryScheduled = await coordinator.tick();
+    expect(statusOf(retryScheduled, "research")).toBe("ready");
+
     const snapshot = await coordinator.tick();
     expect(statusOf(snapshot, "research")).toBe("failed");
     expect(statusOf(snapshot, "strategy")).toBe("blocked");
