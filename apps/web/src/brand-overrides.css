@@ -60,6 +60,14 @@ body { background: var(--canvas); }
 .relay-page { width: min(1500px,100%); margin: 0 auto; }
 .relay-hero.reference-hero { align-items: center; padding: 2px 4px 28px; }
 .workflow-header-actions { display: flex; align-items: center; gap: 8px; }
+.workflow-header-actions select { min-height: 38px; max-width: 180px; padding: 0 28px 0 10px; border: 1px solid var(--line); border-radius: 7px; color: #46505d; background: #fff; font-size: 11px; }
+.execution-receipt { display: grid; gap: 5px; margin-top: 14px; padding: 12px; border: 1px solid #c9e1d4; border-radius: 8px; color: #2f6e55; background: #edf7f1; }
+.execution-receipt strong { font-size: 11px; text-transform: capitalize; }
+.execution-receipt code, .execution-receipt small { color: #587166; font-size: 9px; overflow-wrap: anywhere; }
+.decision-empty { display: grid; place-content: center; min-height: 300px; text-align: center; color: var(--muted); }
+.decision-empty strong { color: var(--ink); }
+.decision-empty-degraded strong, .decision-empty-failed strong { color: var(--red); }
+.evidence-list { max-height: 390px; overflow: auto; }
 .active-badge-completed { color: #2f6e55; background: #eaf3eb; }
 .active-badge-degraded, .active-badge-failed { color: #9c4444; border-color: #eccaca; background: #f9eaea; }
 .relay-fixture-banner { margin-bottom: 15px; border-color: #e4d5b7; border-radius: 7px; color: #77571f; background: #fff8e9; }
@@ -81,4 +89,6 @@ body { background: var(--canvas); }
   .create-button { order: 2; width: 42px; min-height: 42px; margin: 0 0 0 auto; }
   .main { min-height: calc(100vh - 68px); padding: 20px 14px; }
   .relay-hero.reference-hero { align-items: flex-start; }
+  .workflow-header-actions { width: 100%; flex-wrap: wrap; }
+  .workflow-header-actions select { flex: 1; min-width: 130px; }
 }

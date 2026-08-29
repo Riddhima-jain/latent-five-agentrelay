@@ -16,6 +16,8 @@ export interface RelayTaskView {
   dependsOn: string[];
   summary?: string;
   durationMs?: number;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface RelayApprovalView {
@@ -50,12 +52,17 @@ export interface RelaySessionView {
   tasks: RelayTaskView[];
   approval: RelayApprovalView | null;
   trace: RelayTraceView[];
+  evidence?: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; status: string; createdAt: string }>;
+  receipts?: Array<{ actionId: string; provider: "mock" | "resend"; externalReference: string; acceptedAt: string }>;
 }
 
+export interface CreateRelaySessionInput { goal?: string | undefined; scenario?: "normal" | "timeout" | "denial" | undefined }
+type Awaitable<T> = T | Promise<T>;
 export interface RelaySessionReader {
-  createSession(): RelaySessionView;
-  getSession(id: string): RelaySessionView;
-  decideApproval(approvalId: string, decision: "approve" | "deny"): RelaySessionView;
+  createSession(input?: CreateRelaySessionInput): Awaitable<RelaySessionView>;
+  getSession(id: string): Awaitable<RelaySessionView>;
+  listSessions(): Awaitable<RelaySessionView[]>;
+  decideApproval(approvalId: string, decision: "approve" | "deny"): Awaitable<RelaySessionView>;
 }
 
 /** Owns independent in-memory demo sessions while policy stays server-controlled. */
@@ -78,6 +85,10 @@ export class DemoRelaySessionService implements RelaySessionReader {
     const session = this.sessions.get(id);
     if (session === undefined) throw new HttpError(404, `Relay session not found: ${id}`);
     return session.snapshot();
+  }
+
+  listSessions(): RelaySessionView[] {
+    return [...this.sessions.values()].map((session) => session.snapshot());
   }
 
   decideApproval(approvalId: string, decision: "approve" | "deny"): RelaySessionView {

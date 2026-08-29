@@ -374,7 +374,7 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {view === "relay" ? <AgentRelayDashboard /> : <>
+        {view === "relay" ? <AgentRelayDashboard runtimeReady={Boolean(system?.modelConfigured && system?.codexAvailable)} /> : <>
         {!system?.modelConfigured || !system?.codexAvailable ? (
           <div className="config-banner">
             <span>!</span>

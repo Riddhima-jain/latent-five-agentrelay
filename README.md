@@ -8,8 +8,8 @@ Run it locally with Docker, Colima, or rootless Podman, or deploy it to
 Volcengine ECS.
 
 > [!WARNING]
-> This is a single-user proof of concept. It intentionally has no identity,
-> tracing, audit, or hardened sandbox middleware. Do not use production data or
+> This is a single-user proof of concept. It intentionally has no user identity,
+> multi-tenant authorization, or hardened sandbox boundary. Do not use production data or
 > credentials. See [SECURITY.md](SECURITY.md).
 
 ## Screenshots
@@ -44,8 +44,17 @@ The web dashboard can start an independent workflow with
 It submits only `approve` or `deny` to
 `POST /api/relay/approvals/:id`; action contents and risk metadata are not
 accepted from the browser. Approval and denial events are returned in the
-session trace. This demo adapter is currently in-memory and resets when the
-server restarts.
+session trace. Sessions, tasks, evidence, approvals, and mock execution receipts
+are persisted in `agentrelay.json` using serialized atomic writes.
+
+Normal mode executes real Codex workflow participants against controlled fixture
+files. Timeout and denial scenarios exercise the same coordinator, retry,
+evidence, policy, and trace boundaries with deterministic fault triggers. See
+[the demo SOP](docs/DEMO.md) for the positive and negative paths.
+
+The trusted mock email executor is the default. An optional Resend executor can
+deliver only to a configured team-owned override inbox; Agent-provided recipients
+never control real delivery.
 
 ## Requirements
 

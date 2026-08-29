@@ -36,8 +36,12 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/web/dist ./apps/web/dist
+COPY fixtures ./fixtures
 
-RUN mkdir -p /app/data /app/workspaces /app/codex-home \
+RUN test -f /app/fixtures/sales-recovery/market-report.json \
+    && test -f /app/fixtures/sales-recovery/finance-report.csv \
+    && test -f /app/fixtures/sales-recovery/customer-list.json \
+    && mkdir -p /app/data /app/workspaces /app/codex-home \
     && chown -R node:node /app
 
 USER node

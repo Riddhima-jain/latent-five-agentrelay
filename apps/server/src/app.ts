@@ -27,6 +27,10 @@ const messageBody = z.object({
 const relaySessionParams = z.object({ id: z.string().trim().min(1).max(120) });
 const relayApprovalParams = z.object({ id: z.string().trim().min(1).max(160) });
 const relayDecisionBody = z.object({ decision: z.enum(["approve", "deny"]) }).strict();
+const createRelaySessionBody = z.object({
+  goal: z.string().trim().min(1).max(2_000).optional(),
+  scenario: z.enum(["normal", "timeout", "denial"]).default("normal"),
+}).strict();
 
 export async function createApp(
   config: AppConfig,
@@ -138,17 +142,20 @@ export async function createApp(
 
   app.get("/api/relay/sessions/:id", async (request) => {
     const { id } = relaySessionParams.parse(request.params);
-    return { session: relayService.getSession(id) };
+    return { session: await relayService.getSession(id) };
   });
 
-  app.post("/api/relay/sessions", async (_request, reply) => {
-    return reply.code(201).send({ session: relayService.createSession() });
+  app.get("/api/relay/sessions", async () => ({ sessions: await relayService.listSessions() }));
+
+  app.post("/api/relay/sessions", async (request, reply) => {
+    const input = createRelaySessionBody.parse(request.body ?? {});
+    return reply.code(201).send({ session: await relayService.createSession(input) });
   });
 
   app.post("/api/relay/approvals/:id", async (request) => {
     const { id } = relayApprovalParams.parse(request.params);
     const { decision } = relayDecisionBody.parse(request.body);
-    return { session: relayService.decideApproval(id, decision) };
+    return { session: await relayService.decideApproval(id, decision) };
   });
 
   if (config.nodeEnv === "production") {

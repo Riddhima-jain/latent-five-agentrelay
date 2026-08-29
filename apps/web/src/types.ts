@@ -68,6 +68,8 @@ export interface RelayTask {
   dependsOn: string[];
   summary?: string;
   durationMs?: number;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export type RelayDecision =
@@ -108,4 +110,18 @@ export interface RelaySession {
   tasks: RelayTask[];
   approval: RelayApproval | null;
   trace: RelayTraceEvent[];
+  evidence?: Array<{
+    id: string;
+    taskId: string;
+    claim: string;
+    sourceRefs: string[];
+    status: string;
+    createdAt: string;
+  }>;
+  receipts?: Array<{
+    actionId: string;
+    provider: "mock" | "resend";
+    externalReference: string;
+    acceptedAt: string;
+  }>;
 }

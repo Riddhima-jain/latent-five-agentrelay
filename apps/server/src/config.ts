@@ -52,6 +52,10 @@ const envSchema = z.object({
     .url()
     .default("https://generativelanguage.googleapis.com/v1beta"),
   GEMINI_PROXY_BASE_URL: z.string().url().optional(),
+  EMAIL_EXECUTOR: z.enum(["mock", "resend"]).default("mock"),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM: z.string().optional(),
+  RESEND_TO_OVERRIDE: z.string().email().optional(),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 
@@ -72,6 +76,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     typeof process.getuid === "function" && typeof process.getgid === "function"
       ? process.getuid() + ":" + process.getgid()
       : "1000:1000";
+  if (env.EMAIL_EXECUTOR === "resend" && (!env.RESEND_API_KEY?.trim() || !env.RESEND_FROM?.trim() || !env.RESEND_TO_OVERRIDE)) {
+    throw new Error("EMAIL_EXECUTOR=resend requires RESEND_API_KEY, RESEND_FROM, and RESEND_TO_OVERRIDE");
+  }
   return {
     host: env.HOST,
     port: env.PORT,
@@ -100,6 +107,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     geminiModel: env.GEMINI_MODEL.trim(),
     geminiBaseUrl: env.GEMINI_BASE_URL.replace(/\/+$/, ""),
     geminiProxyBaseUrl: env.GEMINI_PROXY_BASE_URL?.replace(/\/+$/, "") ?? "",
+    emailExecutor: env.EMAIL_EXECUTOR,
+    resendApiKey: env.RESEND_API_KEY?.trim() ?? "",
+    resendFrom: env.RESEND_FROM?.trim() ?? "",
+    resendToOverride: env.RESEND_TO_OVERRIDE?.trim() ?? "",
     nodeEnv: env.NODE_ENV,
   };
 }
