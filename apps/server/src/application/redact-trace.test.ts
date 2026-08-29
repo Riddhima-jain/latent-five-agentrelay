@@ -25,14 +25,15 @@ describe("scrubSecrets", () => {
     expect(out).toEqual({ note: "[REDACTED]", plain: "ok" });
   });
 
-  it("redacts a bearer credential", () => {
-    const out = scrubSecrets({ auth: "Bearer abc.def.ghi" }, []);
-    expect(out.auth).toBe("bearer [REDACTED]");
+  it("redacts every bearer credential in a string", () => {
+    const out = scrubSecrets({ auth: "Bearer abc.def.ghi and also Bearer zzz999" }, []);
+    expect(out.auth).toBe("bearer [REDACTED] and also bearer [REDACTED]");
   });
 
-  it("redacts a long secret-shaped run even when not in the secrets list", () => {
-    const out = scrubSecrets({ key: "sk-01234567890123456789abcdefghij" }, []);
-    expect(out.key).toBe("[REDACTED]");
+  it("redacts a token containing punctuation the old heuristic missed", () => {
+    const punct = "exec.tok~en+aa/bb==ccddeeff";
+    const out = scrubSecrets({ note: `header ${punct}` }, [punct]);
+    expect(out.note).toBe("[REDACTED]");
   });
 
   it("recurses into nested objects and arrays", () => {
@@ -40,8 +41,17 @@ describe("scrubSecrets", () => {
     expect(out).toEqual({ a: { b: [{ c: "[REDACTED]" }] } });
   });
 
-  it("leaves ordinary short strings untouched", () => {
-    const out = scrubSecrets({ recipient: "customer@example.com", type: "SEND_EMAIL" }, [TOKEN]);
-    expect(out).toEqual({ recipient: "customer@example.com", type: "SEND_EMAIL" });
+  it("leaves ordinary strings and long identifiers untouched (no random-looking heuristic)", () => {
+    const uuid = "550e8400-e29b-41d4-a716-446655440000";
+    const out = scrubSecrets(
+      { recipient: "customer@example.com", type: "SEND_EMAIL", actionId: uuid, externalReference: "msg-01HXYZ0123456789ABCDEFGHJK" },
+      [TOKEN],
+    );
+    expect(out).toEqual({
+      recipient: "customer@example.com",
+      type: "SEND_EMAIL",
+      actionId: uuid,
+      externalReference: "msg-01HXYZ0123456789ABCDEFGHJK",
+    });
   });
 });

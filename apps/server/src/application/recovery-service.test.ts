@@ -82,6 +82,37 @@ describe("RecoveryService", () => {
     expect(executor.calls).toBe(1);
   });
 
+  it("fails closed on an unrecognized executor error without retrying", async () => {
+    const executor = executorOf(async () => {
+      throw new Error("boom");
+    });
+    const onRetry = vi.fn();
+    const outcome = await service.run(action, { executor, maxAttempts: 3, timeoutMs: 50, onRetry });
+    expect(outcome.terminal).toBe(true);
+    expect(outcome.result.status).toBe("failed");
+    expect(outcome.reason).toMatch(/^UNKNOWN_EXECUTION_ERROR/);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(executor.calls).toBe(1);
+  });
+
+  it("does not leak an unhandled rejection when a timed-out attempt later rejects", async () => {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const executor = executorOf(
+        () =>
+          new Promise<ActionResult>((_, reject) => setTimeout(() => reject(new Error("late")), 30)),
+      );
+      const outcome = await service.run(action, { executor, maxAttempts: 1, timeoutMs: 5 });
+      expect(outcome.terminal).toBe(true);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("times out a hung attempt and treats it as transient", async () => {
     const executor = executorOf(() => new Promise<ActionResult>(() => {}));
     const onRetry = vi.fn();

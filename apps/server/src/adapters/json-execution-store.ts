@@ -42,16 +42,45 @@ export class JsonExecutionStore implements ExecutionStore {
     try {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as ExecutionLedger;
-      if (parsed.version !== 1 || typeof parsed.records !== "object") {
+      if (
+        parsed.version !== 1 ||
+        parsed.records === null ||
+        typeof parsed.records !== "object" ||
+        Array.isArray(parsed.records)
+      ) {
         throw new Error("Unsupported execution ledger format");
       }
       this.data = parsed;
+      if (this.reclaimInterrupted()) {
+        await this.persist(this.data);
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
       }
       await this.persist(this.data);
     }
+  }
+
+  /**
+   * A record left `executing` by a process that died mid-attempt has no
+   * acknowledged send and no terminal signal — it would wedge the key forever.
+   * On load, move each such record to `failed` so the workflow can fail loudly
+   * rather than hang (mirrors `agent-service.initialize()` for interrupted Runs;
+   * plan reliability requirement — no silent skip). Returns whether anything changed.
+   */
+  private reclaimInterrupted(): boolean {
+    let changed = false;
+    const timestamp = this.now().toISOString();
+    for (const record of Object.values(this.data.records)) {
+      if (record.status === "executing" || record.status === "pending") {
+        record.status = "failed";
+        record.result = { status: "failed", error: "RECLAIMED_AFTER_INTERRUPT" };
+        record.updatedAt = timestamp;
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   async get(idempotencyKey: string): Promise<ExecutionRecord | null> {

@@ -107,40 +107,54 @@ describe("enforcement attacks", () => {
   it("concurrent duplicate requests send exactly once", async () => {
     const { svc, service } = wire();
     await Promise.all([
-      svc.run(approvedEmailAction(), "AUTO_EXECUTE"),
-      svc.run(approvedEmailAction(), "AUTO_EXECUTE"),
-      svc.run(approvedEmailAction(), "AUTO_EXECUTE"),
+      svc.run(approvedEmailAction(), "REQUIRE_APPROVAL"),
+      svc.run(approvedEmailAction(), "REQUIRE_APPROVAL"),
+      svc.run(approvedEmailAction(), "REQUIRE_APPROVAL"),
     ]);
     expect(service.sentCount).toBe(1);
   });
 
   it("retry after success does not re-send", async () => {
     const { svc, service } = wire();
-    await svc.run(approvedEmailAction(), "AUTO_EXECUTE");
-    await svc.run(approvedEmailAction(), "AUTO_EXECUTE");
+    await svc.run(approvedEmailAction(), "REQUIRE_APPROVAL");
+    await svc.run(approvedEmailAction(), "REQUIRE_APPROVAL");
     expect(service.sentCount).toBe(1);
   });
 
   it("retry after partial failure sends exactly once", async () => {
     const { svc, service } = wire();
     service.failNextSends(1);
-    const outcome = await svc.run(approvedEmailAction(), "AUTO_EXECUTE");
+    const outcome = await svc.run(approvedEmailAction(), "REQUIRE_APPROVAL");
     expect(outcome.terminal).toBe(false);
     expect(service.sentCount).toBe(1);
   });
 
-  it("a token-like string in the action never reaches a trace event", async () => {
-    const { svc, sink } = wire();
+  it("AUTO_EXECUTE for a protected action is refused without a send", async () => {
+    const { svc, service } = wire();
+    const outcome = await svc.run(approvedEmailAction(), "AUTO_EXECUTE");
+    expect(outcome).toMatchObject({ terminal: true, reason: "PROTECTED_ACTION_REQUIRES_APPROVAL" });
+    expect(service.sentCount).toBe(0);
+  });
+
+  it("a token-like string carried in an emitted field never reaches a trace event or the ledger", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "attacks-redact-"));
+    dirs.push(dir);
+    const store = new JsonExecutionStore(path.join(dir, "executions.json"), now);
+    await store.initialize();
+    const { svc, sink } = wire({ store });
     await svc.run(
-      approvedEmailAction({ rationale: `secret ${EXECUTOR_TOKEN} do not log` }),
-      "AUTO_EXECUTE",
+      approvedEmailAction({ target: `customer@example.com ${EXECUTOR_TOKEN}` }),
+      "REQUIRE_APPROVAL",
     );
     expect(JSON.stringify(sink.events)).not.toContain(EXECUTOR_TOKEN);
+    for (const event of sink.events) {
+      expect(event.metadata?.target).toBe("[REDACTED]");
+    }
   });
 
   it("terminal failure surfaces terminal:true for the Coordinator", async () => {
     const { svc } = wire({ serviceToken: "a-different-expected-token-value-000" });
-    const outcome = await svc.run(approvedEmailAction(), "AUTO_EXECUTE");
+    const outcome = await svc.run(approvedEmailAction(), "REQUIRE_APPROVAL");
     expect(outcome.terminal).toBe(true);
   });
 
@@ -151,7 +165,7 @@ describe("enforcement attacks", () => {
     const store = new JsonExecutionStore(file, now);
     await store.initialize();
     const { svc } = wire({ store });
-    await svc.run(approvedEmailAction(), "AUTO_EXECUTE");
+    await svc.run(approvedEmailAction(), "REQUIRE_APPROVAL");
     const onDisk = await readFile(file, "utf8");
     for (const needle of ["customer@example.com", "We want you back", "win you back", EXECUTOR_TOKEN]) {
       expect(onDisk).not.toContain(needle);

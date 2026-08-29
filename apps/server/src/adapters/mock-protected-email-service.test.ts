@@ -47,14 +47,24 @@ describe("MockProtectedEmailService", () => {
     expect(await a.send(TOKEN, request())).toEqual(await b.send(TOKEN, request()));
   });
 
-  it("gives two successful sends distinct message ids", async () => {
+  it("gives two distinct actions distinct message ids", async () => {
     const service = new MockProtectedEmailService({ expectedToken: TOKEN, now: fixedClock });
 
     const first = await service.send(TOKEN, request());
-    const second = await service.send(TOKEN, request());
+    const second = await service.send(TOKEN, { ...request(), actionId: "action-2" });
 
     expect(first.messageId).not.toEqual(second.messageId);
     expect(service.sentCount).toBe(2);
+  });
+
+  it("is idempotent on sessionId|actionId: a repeat returns the stored receipt without a second send", async () => {
+    const service = new MockProtectedEmailService({ expectedToken: TOKEN, now: fixedClock });
+
+    const first = await service.send(TOKEN, request());
+    const repeat = await service.send(TOKEN, request());
+
+    expect(repeat).toEqual(first);
+    expect(service.sentCount).toBe(1);
   });
 
   it("throws a non-auth error while transient failures are queued", async () => {

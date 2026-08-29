@@ -12,10 +12,10 @@ export interface RecoveryOptions {
   maxAttempts: number;
   timeoutMs: number;
   /** Fixed inter-attempt delay. 0 in tests (plan KTD5 — no backoff in P0). */
-  delayMs?: number;
+  delayMs?: number | undefined;
   /** Called with the just-failed attempt number before the next attempt. Awaited so
    * a `retry.scheduled` trace event is ordered before the terminal event. */
-  onRetry?: (attempt: number) => void | Promise<void>;
+  onRetry?: ((attempt: number) => void | Promise<void>) | undefined;
 }
 
 /**
@@ -70,8 +70,14 @@ export class RecoveryService {
         timeoutMs,
       );
     });
+    // The in-process executor cannot be aborted, so a timed-out attempt is
+    // abandoned. Attach a no-op catch so a late rejection from the orphaned
+    // call never surfaces as an unhandledRejection. (A real executor should
+    // additionally take an AbortSignal — tracked as a follow-up.)
+    const attempt = executor.execute(action);
+    attempt.catch(() => undefined);
     try {
-      return await Promise.race([executor.execute(action), timeout]);
+      return await Promise.race([attempt, timeout]);
     } finally {
       if (timer) {
         clearTimeout(timer);

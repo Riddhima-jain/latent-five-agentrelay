@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { ApprovedAction, AutomationDecision } from "../domain/action.js";
+import type { ActionResult, ApprovedAction, AutomationDecision } from "../domain/action.js";
 import type { ExternalActionExecutor, TraceSink } from "../domain/ports.js";
+import { PROTECTED_ACTION_TYPE } from "../domain/protected-action.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
-import { scrubSecrets, summarizePayload } from "../adapters/redact-trace.js";
+import { scrubSecrets, summarizePayload } from "./redact-trace.js";
 import type {
   ApprovalVerifier,
   ExecutionOutcome,
@@ -18,12 +19,12 @@ export interface ExecutionServiceDeps {
   recovery: RecoveryService;
   sink: TraceSink;
   traceId: string;
-  /** Secrets scrubbed from every trace metadata payload (defense in depth). */
-  secrets?: string[];
-  maxAttempts?: number;
-  timeoutMs?: number;
-  delayMs?: number;
-  now?: () => Date;
+  /** Secrets scrubbed from every trace metadata payload and every persisted result (defense in depth). */
+  secrets?: string[] | undefined;
+  maxAttempts?: number | undefined;
+  timeoutMs?: number | undefined;
+  delayMs?: number | undefined;
+  now?: (() => Date) | undefined;
 }
 
 const inProgress = (): ExecutionOutcome => ({
@@ -56,6 +57,14 @@ export class ExecutionService implements ExecutionServicePort {
       throw new Error(
         `ExecutionService received a ${decision} action; only AUTO_EXECUTE or approved REQUIRE_APPROVAL actions may reach it`,
       );
+    }
+
+    // The boundary independently binds the protected type to approval: the
+    // automation decision matrix never yields AUTO_EXECUTE for an external
+    // action, so an AUTO_EXECUTE SEND_EMAIL is an upstream misclassification and
+    // is refused here rather than executed unapproved (plan R5/R6).
+    if (action.type === PROTECTED_ACTION_TYPE && decision === "AUTO_EXECUTE") {
+      return this.fail(action, "PROTECTED_ACTION_REQUIRES_APPROVAL");
     }
 
     const key = `${action.sessionId}|${action.id}|${action.payloadHash}`;
@@ -98,11 +107,14 @@ export class ExecutionService implements ExecutionServicePort {
       onRetry: (attempt) => this.emit(action, "retry.scheduled", decision, { attempt }),
     });
 
+    const safeResult = this.redactResult(outcome.result);
+    const safeReason = outcome.reason ? this.redactText(outcome.reason) : undefined;
+
     await this.deps.store.update({
       ...claimed,
       status: outcome.terminal ? "failed" : "succeeded",
       attempts: claimed.attempts + 1,
-      result: outcome.result,
+      result: safeResult,
       updatedAt: this.now().toISOString(),
     });
 
@@ -110,10 +122,10 @@ export class ExecutionService implements ExecutionServicePort {
       action,
       outcome.terminal ? "action.failed" : "action.executed",
       decision,
-      outcome.reason ? { reason: outcome.reason } : undefined,
+      safeReason ? { reason: safeReason } : undefined,
     );
 
-    return outcome;
+    return { ...outcome, result: safeResult, reason: safeReason };
   }
 
   /**
@@ -126,6 +138,23 @@ export class ExecutionService implements ExecutionServicePort {
     return { result: { status: "failed", error: reason }, terminal: true, reason };
   }
 
+  /** Redact any secret that reached a free-text `error` value before it is persisted or traced (plan R12/R13). */
+  private redactResult(result: ActionResult): ActionResult {
+    if (!result.error) {
+      return result;
+    }
+    return { ...result, error: this.redactText(result.error) };
+  }
+
+  private redactText(text: string): string {
+    return scrubSecrets(text, this.secrets);
+  }
+
+  /**
+   * Trace emission is best-effort: a `TraceSink` failure is logged to the sink's
+   * own error channel where possible but must never abort the execution state
+   * machine (a thrown emit between claim and update would wedge the key).
+   */
   private async emit(
     action: ApprovedAction,
     type: TraceEventType,
@@ -154,6 +183,13 @@ export class ExecutionService implements ExecutionServicePort {
       timestamp: this.now().toISOString(),
       metadata,
     };
-    await this.deps.sink.append(event);
+    try {
+      await this.deps.sink.append(event);
+    } catch {
+      // Swallow: the protected side effect and the idempotency ledger are the
+      // source of truth. A dropped trace event is a visibility gap, not a
+      // correctness failure, and must not prevent the ledger from reaching a
+      // terminal state.
+    }
   }
 }
