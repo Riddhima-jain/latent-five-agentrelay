@@ -1,0 +1,73 @@
+/* Loaded after the baseline stylesheet: preserve feature selectors, override presentation only. */
+:root {
+  --ink: #1f2430;
+  --muted: #697380;
+  --line: #d9dee3;
+  --paper: #ffffff;
+  --purple: #5d4a7d;
+  --purple-dark: #4d3c6b;
+  --purple-soft: #eeeaf4;
+  --green: #3f7d63;
+  --red: #b95353;
+  --sage: #acc6aa;
+  --teal: #71a0a5;
+  --warm: #d7b98a;
+  --canvas: #f5f6f2;
+  --shadow: 0 8px 24px rgba(31, 36, 48, .06);
+  color: var(--ink);
+  background: var(--canvas);
+}
+
+body { background: var(--canvas); }
+.app-shell { grid-template-columns: 250px minmax(0, 1fr); }
+.sidebar { padding: 28px 16px 20px; color: var(--ink); background: rgba(255,255,255,.94); border-right-color: #e1e5e2; box-shadow: 4px 0 18px rgba(31,36,48,.035); }
+.brand { min-height: 62px; padding: 0 14px 30px; }
+.brand strong, .brand span { display: inline; }
+.create-button { order: 3; margin-top: 16px; background: var(--purple); }
+.view-switcher { order: 1; gap: 7px; margin: 0; padding: 0; }
+.view-switcher button { min-height: 50px; padding: 0 15px; color: #5f6977; border-radius: 9px; font-size: 14px; font-weight: 500; }
+.view-switcher button:hover { color: var(--ink); background: #f2f4f0; }
+.view-switcher button.active { color: var(--ink); background: linear-gradient(90deg,#e6eee5,#edf1ed); box-shadow: inset 2px 0 var(--teal); }
+.view-switcher span { width: 28px; color: #657485; font-size: 17px; }
+.sidebar-label { order: 4; color: #899198; }
+.agent-list { order: 5; }
+.agent-card { color: var(--ink); }
+.agent-card:hover { background: #f1f3f0; }
+.agent-card.selected { background: #e8eee8; border-color: #d8e2d7; box-shadow: inset 3px 0 var(--teal); }
+.agent-avatar { color: var(--purple); background: #eeeaf4; }
+.agent-card-copy span, .empty-sidebar { color: var(--muted); }
+.runtime-card { order: 6; margin-top: auto; color: var(--ink); background: #f3f5f1; border-color: #e0e4df; }
+.main { padding: 32px 28px; background: var(--canvas); }
+.button { border-radius: 7px; }
+.button-primary { background: var(--purple); box-shadow: 0 6px 14px rgba(93,74,125,.18); }
+.button-primary:hover:not(:disabled) { background: var(--purple-dark); }
+.button-ghost { color: #46505d; background: #edf0ef; }
+.button-danger { color: #9f3f3f; background: #f6e7e7; }
+.status-ready { color: var(--green); background: #e8f2ec; }
+.status-busy { color: var(--purple); background: var(--purple-soft); }
+.settings-panel, .playground, .modal, .auth-card { border-color: var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.composer textarea, input, textarea { border-color: var(--line); border-radius: 7px; }
+.error-banner { border-color: #ebc7c7; color: #943e3e; background: #fbefef; }
+.config-banner { border-color: #e7d6b8; color: #77571f; background: #fff8e9; }
+.relay-page { width: min(1500px,100%); margin: 0 auto; }
+.relay-hero.reference-hero { align-items: center; padding: 2px 4px 28px; }
+.relay-fixture-banner { margin-bottom: 15px; border-color: #e4d5b7; border-radius: 7px; color: #77571f; background: #fff8e9; }
+
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: 82px minmax(0,1fr); }
+  .sidebar { padding: 20px 10px; }
+  .brand { padding: 0 1px 24px; }
+  .view-switcher button { padding: 0 10px; font-size: 0; text-align: center; }
+  .view-switcher span { width: auto; font-size: 16px; }
+}
+
+@media (max-width: 680px) {
+  .app-shell { display: block; }
+  .sidebar { height: 68px; min-height: 0; padding: 8px 12px; flex-direction: row; }
+  .brand { padding: 0; }
+  .view-switcher { display: flex; }
+  .view-switcher button { width: 42px; min-height: 42px; padding: 0; }
+  .create-button { order: 2; width: 42px; min-height: 42px; margin: 0 0 0 auto; }
+  .main { min-height: calc(100vh - 68px); padding: 20px 14px; }
+  .relay-hero.reference-hero { align-items: flex-start; }
+}
