@@ -5,7 +5,7 @@ import type {
   ExecutionRecordSeed,
   ExecutionStore,
 } from "../application/execution-ports.js";
-import { assertNoPayloadLeak } from "./execution-record-guard.js";
+import { assertNoPayloadLeak, newExecutingRecord } from "./execution-record.js";
 
 interface ExecutionLedger {
   version: 1;
@@ -60,17 +60,7 @@ export class JsonExecutionStore implements ExecutionStore {
       if (ledger.records[seed.idempotencyKey]) {
         return null;
       }
-      const timestamp = this.now().toISOString();
-      const record: ExecutionRecord = {
-        idempotencyKey: seed.idempotencyKey,
-        sessionId: seed.sessionId,
-        actionId: seed.actionId,
-        payloadHash: seed.payloadHash,
-        status: "executing",
-        attempts: 0,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
+      const record = newExecutingRecord(seed, this.now().toISOString());
       ledger.records[record.idempotencyKey] = record;
       return structuredClone(record);
     });

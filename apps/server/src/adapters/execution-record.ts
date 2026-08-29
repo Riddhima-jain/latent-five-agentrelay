@@ -1,4 +1,24 @@
-import type { ExecutionRecord } from "../application/execution-ports.js";
+import type {
+  ExecutionRecord,
+  ExecutionRecordSeed,
+} from "../application/execution-ports.js";
+
+/** Builds the initial `executing` record for a freshly claimed key. */
+export function newExecutingRecord(
+  seed: ExecutionRecordSeed,
+  timestamp: string,
+): ExecutionRecord {
+  return {
+    idempotencyKey: seed.idempotencyKey,
+    sessionId: seed.sessionId,
+    actionId: seed.actionId,
+    payloadHash: seed.payloadHash,
+    status: "executing",
+    attempts: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
 
 const FORBIDDEN_RESULT_KEYS = new Set(["status", "externalReference", "error"]);
 const PAYLOAD_FIELD_KEYS = new Set(["recipient", "subject", "body", "payload"]);

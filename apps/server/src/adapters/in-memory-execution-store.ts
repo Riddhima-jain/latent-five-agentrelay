@@ -3,7 +3,7 @@ import type {
   ExecutionRecordSeed,
   ExecutionStore,
 } from "../application/execution-ports.js";
-import { assertNoPayloadLeak } from "./execution-record-guard.js";
+import { assertNoPayloadLeak, newExecutingRecord } from "./execution-record.js";
 
 /**
  * In-memory `ExecutionStore` for other people's tests and for isolated
@@ -26,17 +26,7 @@ export class InMemoryExecutionStore implements ExecutionStore {
       if (this.records.has(seed.idempotencyKey)) {
         return null;
       }
-      const timestamp = this.now().toISOString();
-      const record: ExecutionRecord = {
-        idempotencyKey: seed.idempotencyKey,
-        sessionId: seed.sessionId,
-        actionId: seed.actionId,
-        payloadHash: seed.payloadHash,
-        status: "executing",
-        attempts: 0,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
+      const record = newExecutingRecord(seed, this.now().toISOString());
       this.records.set(record.idempotencyKey, record);
       return structuredClone(record);
     });
