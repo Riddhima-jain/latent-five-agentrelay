@@ -24,7 +24,7 @@ export function scheduleReadyTasks(
     if (task.status !== "blocked") return task;
 
     const dependencies = task.dependsOn.map((dependencyId) => tasksById.get(dependencyId));
-    if (dependencies.some((dependency) => dependency?.status === "failed")) {
+    if (dependencies.some((dependency) => dependency?.status === "failed" || dependency?.status === "unassigned")) {
       blockedByFailedDependencyTaskIds.push(task.id);
       return task;
     }

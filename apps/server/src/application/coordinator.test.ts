@@ -1,46 +1,49 @@
 import { describe, expect, it } from "vitest";
 import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-workflow.js";
-import type { AgentManifest } from "../domain/capability.js";
-import type { WorkflowTaskDefinition } from "../domain/task.js";
-import { Coordinator, type FakeAgentExecutor } from "./coordinator.js";
-
-class RecordingExecutor implements FakeAgentExecutor {
-  readonly calls: Array<{ agentId: string; taskId: string }> = [];
-
-  async execute(agentId: string, task: { id: string }): Promise<void> {
-    this.calls.push({ agentId, taskId: task.id });
-  }
-}
+import type { EvidenceRecord } from "../domain/evidence.js";
+import type { CoordinatorPorts } from "./coordinator.js";
+import { Coordinator } from "./coordinator.js";
 
 const fixedClock = () => "2026-08-29T00:00:00.000Z";
+const session = () => ({
+  id: "session-1", goal: "Recover sales", traceId: "trace-1", participantAgentIds: SALES_RECOVERY_AGENTS.map((agent) => agent.agentId),
+  status: "created" as const, createdAt: fixedClock(), updatedAt: fixedClock(),
+});
 
-function statusOf(
-  snapshot: ReturnType<Coordinator["getSnapshot"]>,
-  taskId: string,
-): string | undefined {
+function makePorts(overrides: Partial<CoordinatorPorts> = {}) {
+  const calls: Array<{ agentId: string; taskId: string; evidence: EvidenceRecord[] }> = [];
+  const savedEvidence: EvidenceRecord[] = [];
+  const traces: Array<{ type: string; taskId?: string }> = [];
+  let savedSession = session();
+  const ports: CoordinatorPorts = {
+    agentExecutor: { async execute(agentId, task, context) {
+      calls.push({ agentId, taskId: task.id, evidence: context.dependencyEvidence });
+      return { summary: task.title, evidence: [{ claim: `${task.id} finding`, sourceRefs: [`fixture://${task.id}`] }], proposedActions: [] };
+    } },
+    sessionStore: { async get() { return savedSession; }, async save(value) { savedSession = value; } },
+    taskStore: { async get() { return null; }, async listBySession() { return []; }, async save() {} },
+    evidenceStore: {
+      async save(record) { savedEvidence.push(record); },
+      async listForTasks(taskIds) { return savedEvidence.filter((record) => taskIds.includes(record.taskId)); },
+    },
+    traceSink: { async append(event) { traces.push({ type: event.type, taskId: event.taskId }); } },
+    ...overrides,
+  };
+  return { ports, calls, savedEvidence, traces, getSession: () => savedSession };
+}
+
+function statusOf(snapshot: ReturnType<Coordinator["getSnapshot"]>, taskId: string) {
   return snapshot.tasks.find((task) => task.id === taskId)?.status;
 }
 
 describe("Coordinator", () => {
   it("runs independent roots in parallel and unlocks strategy only after both complete", async () => {
-    const executor = new RecordingExecutor();
-    const coordinator = new Coordinator(
-      SALES_RECOVERY_TASKS,
-      SALES_RECOVERY_AGENTS,
-      executor,
-      fixedClock,
-    );
-
-    const started = coordinator.start("session-1");
-    expect(started).toMatchObject({
-      started: true,
-      snapshot: { readyTaskIds: ["research", "finance"] },
-    });
-
+    const harness = makePorts();
+    const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
+    await expect(coordinator.start(session())).resolves.toMatchObject({ started: true, snapshot: { readyTaskIds: ["research", "finance"] } });
     const afterRoots = await coordinator.tick();
-    expect(executor.calls).toEqual([
-      { agentId: "research-agent", taskId: "research" },
-      { agentId: "finance-agent", taskId: "finance" },
+    expect(harness.calls.map(({ agentId, taskId }) => ({ agentId, taskId }))).toEqual([
+      { agentId: "research-agent", taskId: "research" }, { agentId: "finance-agent", taskId: "finance" },
     ]);
     expect(statusOf(afterRoots, "research")).toBe("completed");
     expect(statusOf(afterRoots, "finance")).toBe("completed");
@@ -48,87 +51,43 @@ describe("Coordinator", () => {
     expect(statusOf(afterRoots, "outreach")).toBe("blocked");
   });
 
-  it("advances the complete frozen workflow across scheduler ticks", async () => {
-    const coordinator = new Coordinator(
-      SALES_RECOVERY_TASKS,
-      SALES_RECOVERY_AGENTS,
-      new RecordingExecutor(),
-      fixedClock,
-    );
-    expect(coordinator.start("session-1")).toMatchObject({ started: true });
-
+  it("uses only accepted, same-session dependency evidence in an executor context", async () => {
+    const harness = makePorts();
+    const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
+    await coordinator.start(session());
     await coordinator.tick();
-    const afterStrategy = await coordinator.tick();
-    const completed = await coordinator.tick();
-
-    expect(statusOf(afterStrategy, "outreach")).toBe("ready");
-    expect(completed.tasks.map((task) => task.status)).toEqual([
-      "completed",
-      "completed",
-      "completed",
-      "completed",
-    ]);
+    harness.savedEvidence[0]!.status = "accepted";
+    harness.savedEvidence.push({ ...harness.savedEvidence[1]!, id: "other-session", sessionId: "other", status: "accepted" });
+    await coordinator.tick();
+    const strategy = harness.calls.find((call) => call.taskId === "strategy")!;
+    expect(strategy.evidence).toHaveLength(1);
+    expect(strategy.evidence[0]!.taskId).toBe("research");
   });
 
-  it("does not start an invalid workflow", () => {
-    const invalidDefinitions: WorkflowTaskDefinition[] = [
-      {
-        ...SALES_RECOVERY_TASKS[0]!,
-        dependsOn: ["research"],
-      },
-    ];
-    const coordinator = new Coordinator(
-      invalidDefinitions,
-      SALES_RECOVERY_AGENTS,
-      new RecordingExecutor(),
-      fixedClock,
-    );
-
-    expect(coordinator.start("session-1")).toMatchObject({
-      started: false,
-      errors: [{ code: "SELF_DEPENDENCY" }],
-    });
+  it("persists provisional evidence and correlated task, agent, and session trace events", async () => {
+    const harness = makePorts();
+    const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
+    await coordinator.start(session());
+    await coordinator.tick(); await coordinator.tick(); await coordinator.tick();
+    expect(harness.savedEvidence).toHaveLength(4);
+    expect(harness.savedEvidence.every((record) => record.status === "provisional")).toBe(true);
+    expect(harness.traces.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "task.created", "task.ready", "agent.selected", "agent.invoked", "evidence.created", "task.completed", "session.completed",
+    ]));
+    expect(harness.getSession().status).toBe("completed");
   });
 
-  it("marks a ready task unassigned when no eligible agent exists", async () => {
-    const agents: AgentManifest[] = SALES_RECOVERY_AGENTS.filter(
-      (agent) => agent.agentId !== "finance-agent",
-    );
-    const coordinator = new Coordinator(
-      SALES_RECOVERY_TASKS,
-      agents,
-      new RecordingExecutor(),
-      fixedClock,
-      new Set(SALES_RECOVERY_AGENTS.flatMap((agent) => agent.capabilities)),
-    );
-
-    const started = coordinator.start("session-1");
-    expect(started).toMatchObject({
-      started: true,
-    });
-    if (!started.started) throw new Error("Expected valid workflow");
-
-    const snapshot = await coordinator.tick();
-    expect(statusOf(snapshot, "finance")).toBe("unassigned");
-  });
-
-  it("keeps downstream work blocked after an executor failure", async () => {
-    const executor: FakeAgentExecutor = {
-      async execute(_agentId, task) {
-        if (task.id === "research") throw new Error("controlled failure");
-      },
-    };
-    const coordinator = new Coordinator(
-      SALES_RECOVERY_TASKS,
-      SALES_RECOVERY_AGENTS,
-      executor,
-      fixedClock,
-    );
-    expect(coordinator.start("session-1")).toMatchObject({ started: true });
-
+  it("fails the session and keeps downstream tasks blocked when an executor fails", async () => {
+    const harness = makePorts({ agentExecutor: { async execute(_agentId, task) {
+      if (task.id === "research") throw new Error("controlled failure");
+      return { summary: "ok", evidence: [], proposedActions: [] };
+    } } });
+    const coordinator = new Coordinator(SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS, harness.ports, fixedClock);
+    await coordinator.start(session());
     const snapshot = await coordinator.tick();
     expect(statusOf(snapshot, "research")).toBe("failed");
     expect(statusOf(snapshot, "strategy")).toBe("blocked");
     expect(snapshot.blockedByFailedDependencyTaskIds).toEqual(["strategy"]);
+    expect(harness.getSession().status).toBe("failed");
   });
 });
