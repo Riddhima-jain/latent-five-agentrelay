@@ -78,7 +78,10 @@ export const api = {
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
-  relaySession: () => request<{ session: RelaySession }>("/api/relay/sessions/demo"),
+  relaySession: (id = "demo") =>
+    request<{ session: RelaySession }>("/api/relay/sessions/" + encodeURIComponent(id)),
+  createRelaySession: () =>
+    request<{ session: RelaySession }>("/api/relay/sessions", { method: "POST" }),
   decideApproval: (id: string, decision: "approve" | "deny") =>
     request<{ session: RelaySession }>("/api/relay/approvals/" + id, {
       method: "POST",

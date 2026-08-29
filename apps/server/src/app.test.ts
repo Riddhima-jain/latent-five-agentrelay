@@ -86,4 +86,24 @@ describe("HTTP boundary", () => {
     expect((await app.inject({ method: "GET", url: "/api/relay/sessions/demo" })).json().session.approval.status).toBe("pending");
     await app.close();
   });
+
+  it("creates fresh Relay sessions with independent approvals", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
+    const first = await app.inject({ method: "POST", url: "/api/relay/sessions" });
+    const second = await app.inject({ method: "POST", url: "/api/relay/sessions" });
+
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(201);
+    expect(first.json().session.id).not.toBe(second.json().session.id);
+    expect(first.json().session.approval.id).not.toBe(second.json().session.approval.id);
+
+    const approved = await app.inject({
+      method: "POST",
+      url: `/api/relay/approvals/${first.json().session.approval.id}`,
+      payload: { decision: "approve" },
+    });
+    expect(approved.json().session.status).toBe("completed");
+    expect((await app.inject({ method: "GET", url: `/api/relay/sessions/${second.json().session.id}` })).json().session.status).toBe("awaiting_approval");
+    await app.close();
+  });
 });
