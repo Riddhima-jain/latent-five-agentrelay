@@ -20,7 +20,7 @@ export function newExecutingRecord(
   };
 }
 
-const FORBIDDEN_RESULT_KEYS = new Set(["status", "externalReference", "error"]);
+const ALLOWED_RESULT_KEYS = new Set(["status", "externalReference", "error"]);
 const PAYLOAD_FIELD_KEYS = new Set(["recipient", "subject", "body", "payload"]);
 
 /**
@@ -36,7 +36,7 @@ export function assertNoPayloadLeak(record: ExecutionRecord): void {
   }
   if (record.result) {
     for (const key of Object.keys(record.result)) {
-      if (!FORBIDDEN_RESULT_KEYS.has(key)) {
+      if (!ALLOWED_RESULT_KEYS.has(key)) {
         throw new Error(`ExecutionRecord.result must be a bare ActionResult; found "${key}" (R13)`);
       }
     }

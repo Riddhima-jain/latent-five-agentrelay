@@ -13,8 +13,9 @@ export interface RecoveryOptions {
   timeoutMs: number;
   /** Fixed inter-attempt delay. 0 in tests (plan KTD5 — no backoff in P0). */
   delayMs?: number;
-  /** Called with the just-failed attempt number before the next attempt. */
-  onRetry?: (attempt: number) => void;
+  /** Called with the just-failed attempt number before the next attempt. Awaited so
+   * a `retry.scheduled` trace event is ordered before the terminal event. */
+  onRetry?: (attempt: number) => void | Promise<void>;
 }
 
 /**
@@ -46,7 +47,7 @@ export class RecoveryService {
         }
         lastReason = "TransientExecutionError: " + error.message;
         if (attempt < maxAttempts) {
-          options.onRetry?.(attempt);
+          await options.onRetry?.(attempt);
           if (delayMs > 0) {
             await sleep(delayMs);
           }

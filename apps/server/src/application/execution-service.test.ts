@@ -67,24 +67,27 @@ describe("ExecutionService", () => {
     expect(service.sentCount).toBe(1);
   });
 
-  it("REQUIRE_APPROVAL denied: terminal, no send, approval.denied emitted", async () => {
+  it("REQUIRE_APPROVAL denied: terminal, no send, action.failed with the reason", async () => {
     const verifier = new StubApprovalVerifier({ ok: false, reason: "APPROVAL_DENIED" });
     const { svc, service, sink, store } = harness({ verifier });
     const outcome = await svc.run(approvedEmailAction(), "REQUIRE_APPROVAL");
 
     expect(outcome).toMatchObject({ terminal: true, reason: "APPROVAL_DENIED" });
     expect(service.sentCount).toBe(0);
-    expect(sink.typesEmitted()).toContain("approval.denied");
+    const failed = sink.events.find((e) => e.type === "action.failed");
+    expect(failed?.metadata).toMatchObject({ reason: "APPROVAL_DENIED" });
     expect(await store.get("session-1|action-1|" + approvedEmailAction().payloadHash)).toBeNull();
   });
 
-  it("hash mismatch emits approval.invalidated and does not send", async () => {
+  it("hash mismatch is terminal, does not send, and records no claim", async () => {
     const verifier = new StubApprovalVerifier({ ok: false, reason: "HASH_MISMATCH" });
     const { svc, service, sink } = harness({ verifier });
     const outcome = await svc.run(approvedEmailAction(), "REQUIRE_APPROVAL");
-    expect(outcome.terminal).toBe(true);
+    expect(outcome).toMatchObject({ terminal: true, reason: "HASH_MISMATCH" });
     expect(service.sentCount).toBe(0);
-    expect(sink.typesEmitted()).toContain("approval.invalidated");
+    expect(sink.events.find((e) => e.type === "action.failed")?.metadata).toMatchObject({
+      reason: "HASH_MISMATCH",
+    });
   });
 
   it("DENY and RECOMMEND_ONLY are caller-contract violations", async () => {

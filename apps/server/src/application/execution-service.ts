@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ActionResult, ApprovedAction, AutomationDecision } from "../domain/action.js";
+import type { ApprovedAction, AutomationDecision } from "../domain/action.js";
 import type { ExternalActionExecutor, TraceSink } from "../domain/ports.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
 import { scrubSecrets, summarizePayload } from "../adapters/redact-trace.js";
@@ -26,7 +26,10 @@ export interface ExecutionServiceDeps {
   now?: () => Date;
 }
 
-const IN_PROGRESS: ActionResult = { status: "executing" };
+const inProgress = (): ExecutionOutcome => ({
+  result: { status: "executing" },
+  terminal: false,
+});
 
 /**
  * The public surface Persons 1/5 call (plan U6). Enforces the approval decision,
@@ -57,17 +60,13 @@ export class ExecutionService implements ExecutionServicePort {
 
     const key = `${action.sessionId}|${action.id}|${action.payloadHash}`;
     if (action.idempotencyKey && action.idempotencyKey !== key) {
-      return this.fail(action, "IDEMPOTENCY_KEY_MISMATCH", "action.failed");
+      return this.fail(action, "IDEMPOTENCY_KEY_MISMATCH");
     }
 
     if (decision === "REQUIRE_APPROVAL") {
       const verdict = await this.deps.verifier.isSatisfied(action);
       if (!verdict.ok) {
-        const type: TraceEventType =
-          verdict.reason === "APPROVAL_INVALIDATED" || verdict.reason === "HASH_MISMATCH"
-            ? "approval.invalidated"
-            : "approval.denied";
-        return this.fail(action, verdict.reason, type);
+        return this.fail(action, verdict.reason);
       }
     }
 
@@ -86,7 +85,7 @@ export class ExecutionService implements ExecutionServicePort {
       if (existing?.status === "failed") {
         return { result: existing.result ?? { status: "failed" }, terminal: true };
       }
-      return { result: IN_PROGRESS, terminal: false };
+      return inProgress();
     }
 
     await this.emit(action, "action.execution_started", decision);
@@ -96,9 +95,7 @@ export class ExecutionService implements ExecutionServicePort {
       maxAttempts: this.maxAttempts,
       timeoutMs: this.timeoutMs,
       delayMs: this.delayMs,
-      onRetry: (attempt) => {
-        void this.emit(action, "retry.scheduled", decision, { attempt });
-      },
+      onRetry: (attempt) => this.emit(action, "retry.scheduled", decision, { attempt }),
     });
 
     await this.deps.store.update({
@@ -119,12 +116,13 @@ export class ExecutionService implements ExecutionServicePort {
     return outcome;
   }
 
-  private async fail(
-    action: ApprovedAction,
-    reason: string,
-    type: TraceEventType,
-  ): Promise<ExecutionOutcome> {
-    await this.emit(action, type, undefined, { reason });
+  /**
+   * P4's boundary emits one unambiguous event when it refuses to execute:
+   * `action.failed` with the precise cause in `metadata.reason`. Approval
+   * lifecycle events (`approval.granted` / `approval.denied`) belong to Person 3.
+   */
+  private async fail(action: ApprovedAction, reason: string): Promise<ExecutionOutcome> {
+    await this.emit(action, "action.failed", undefined, { reason });
     return { result: { status: "failed", error: reason }, terminal: true, reason };
   }
 

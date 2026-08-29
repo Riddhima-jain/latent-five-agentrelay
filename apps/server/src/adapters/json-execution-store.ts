@@ -23,14 +23,21 @@ const emptyLedger = (): ExecutionLedger => ({ version: 1, records: {} });
 export class JsonExecutionStore implements ExecutionStore {
   private data: ExecutionLedger = emptyLedger();
   private queue: Promise<void> = Promise.resolve();
-  private initialized = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(
     private readonly filePath: string,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
+    if (!this.initPromise) {
+      this.initPromise = this.load();
+    }
+    return this.initPromise;
+  }
+
+  private async load(): Promise<void> {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     try {
       const raw = await readFile(this.filePath, "utf8");
@@ -45,7 +52,6 @@ export class JsonExecutionStore implements ExecutionStore {
       }
       await this.persist(this.data);
     }
-    this.initialized = true;
   }
 
   async get(idempotencyKey: string): Promise<ExecutionRecord | null> {
@@ -77,9 +83,7 @@ export class JsonExecutionStore implements ExecutionStore {
   }
 
   private async ensureInitialized(): Promise<void> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    await this.initialize();
   }
 
   private async mutate<T>(mutation: (ledger: ExecutionLedger) => T): Promise<T> {
