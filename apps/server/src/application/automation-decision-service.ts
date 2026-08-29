@@ -7,6 +7,13 @@ export interface PolicyEvidence {
   status: EvidenceStatus;
 }
 
+/** Derived from the server-owned agent registry, never an agent-provided claim. */
+export interface PolicyAgent {
+  agentId: string;
+  registered: boolean;
+  permissions: readonly AgentPermission[];
+}
+
 export interface PolicyDecision {
   decision: AutomationDecision;
   reasons: string[];
@@ -17,7 +24,7 @@ export interface PolicyDecision {
 export function decideAutomation(
   action: ProposedAction,
   evidence: readonly PolicyEvidence[],
-  agentPermissions: readonly AgentPermission[],
+  agent: PolicyAgent,
 ): PolicyDecision {
   const classification = classifyAction(action);
   if (!classification.registered || classification.risk === undefined) {
@@ -25,14 +32,20 @@ export function decideAutomation(
   }
 
   const risk = classification.risk;
+  if (!agent.registered) {
+    return { decision: "DENY", risk, reasons: ["Agent is not registered in the trusted policy registry"] };
+  }
   if (risk.prohibited) {
     return { decision: "DENY", risk, reasons: ["Action is prohibited by the server-side registry"] };
   }
-  if (!agentPermissions.includes(risk.requiredPermission)) {
+  if (!agent.permissions.includes(risk.requiredPermission)) {
     return { decision: "DENY", risk, reasons: ["Agent lacks the required permission"] };
   }
   if (!evidence.some((record) => record.status === "accepted")) {
     return { decision: "RECOMMEND_ONLY", risk, reasons: ["No accepted evidence supports automation"] };
+  }
+  if (evidence.some((record) => record.status === "rejected")) {
+    return { decision: "RECOMMEND_ONLY", risk, reasons: ["Rejected or conflicting evidence prevents automation"] };
   }
   if (risk.impact === "high" || risk.impact === "critical") {
     return { decision: "RECOMMEND_ONLY", risk, reasons: ["High-impact actions cannot execute automatically"] };

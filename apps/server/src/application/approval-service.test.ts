@@ -65,4 +65,14 @@ describe("InMemoryApprovalService", () => {
     expect(() => service.approveAction(proposed.id)).toThrow("already approved");
     expect(() => service.denyAction("missing")).toThrow("Unknown action");
   });
+
+  it("cannot replay an approval after the approved action has been mutated", () => {
+    const service = new InMemoryApprovalService();
+    const proposed = email();
+    service.registerAction(proposed);
+    service.approveAction(proposed.id);
+
+    service.authorize(email({ target: "customer-b" }));
+    expect(service.authorize(proposed)).toMatchObject({ executable: false, reason: "APPROVAL_INVALIDATED" });
+  });
 });
