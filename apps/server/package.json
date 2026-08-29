@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "demo:coordinator": "tsx src/application/coordinator-demo.ts",
+    "demo:coordinator:day3": "tsx src/application/coordinator-day3-demo.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
