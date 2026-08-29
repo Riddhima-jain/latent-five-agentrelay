@@ -1,6 +1,7 @@
 export * from "./action.js";
 export * from "./approval.js";
 export * from "./capability.js";
+export * from "./demo-workflow.js";
 export * from "./evidence.js";
 export * from "./ports.js";
 export * from "./session.js";

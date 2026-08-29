@@ -25,6 +25,16 @@ export interface AgentTask {
   updatedAt: string;
 }
 
+/** A session-independent task declaration used to freeze a workflow DAG. */
+export interface WorkflowTaskDefinition {
+  id: string;
+  title: string;
+  requiredCapability: string;
+  requiredPermissions: AgentPermission[];
+  dependsOn: string[];
+  maxAttempts: number;
+}
+
 /** Untrusted structured output after validation; it never includes policy metadata. */
 export interface AgentExecutionResult {
   summary: string;
