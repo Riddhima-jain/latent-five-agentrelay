@@ -38,6 +38,9 @@ const envSchema = z.object({
     .max(128)
     .regex(/^[A-Za-z0-9._~-]*$/, "APP_AUTH_TOKEN must use URL-safe characters")
     .optional(),
+  // AgentRelay: held ONLY by the protected action executor. Validated at executor
+  // construction, not here, so the server still boots when it is unset.
+  AGENTRELAY_EXECUTOR_TOKEN: z.string().min(24).optional(),
   MODEL_PROVIDER: z.enum(["ark", "gemini"]).default("ark"),
   ARK_API_KEY: z.string().optional(),
   ARK_MODEL: z.string().optional(),
@@ -92,6 +95,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerUser: env.CONTAINER_USER?.trim() || defaultContainerUser,
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
     authToken,
+    executorToken: env.AGENTRELAY_EXECUTOR_TOKEN?.trim() ?? "",
     modelProvider: env.MODEL_PROVIDER,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",
