@@ -101,6 +101,47 @@ export interface RelayTraceEvent {
   tone: "neutral" | "success" | "warning" | "danger";
 }
 
+export interface RelayAgentManifestView {
+  agentId: string;
+  name: string;
+  capabilities: string[];
+  runnable: boolean;
+  allowedTools: Array<"resource.read">;
+  resourceScopes: string[];
+}
+
+export type RelayResourceAccessReason =
+  | "GRANT_PERMITS_REQUEST"
+  | "INVALID_GRANT"
+  | "GRANT_REVOKED"
+  | "GRANT_EXPIRED"
+  | "TOOL_NOT_ALLOWED"
+  | "RESOURCE_OUT_OF_SCOPE"
+  | "OPERATION_NOT_ALLOWED";
+
+export interface RelayResourceAccessEvent {
+  id: string;
+  timestamp: string;
+  agentId: string;
+  agentName: string;
+  taskId: string;
+  tool: "resource.read";
+  resource: string;
+  operation: "read";
+  decision: "ALLOW" | "DENY";
+  reason: RelayResourceAccessReason;
+}
+
+export interface RelayRecommendationView {
+  id: string;
+  taskId: string;
+  actionType: string;
+  summary: string;
+  decision: "RECOMMEND_ONLY";
+  reasons: string[];
+  supportingEvidenceIds: string[];
+}
+
 export interface RelaySession {
   id: string;
   traceId: string;
@@ -125,4 +166,7 @@ export interface RelaySession {
     externalReference: string;
     acceptedAt: string;
   }>;
+  agentManifests?: RelayAgentManifestView[];
+  resourceAccessEvents?: RelayResourceAccessEvent[];
+  recommendations?: RelayRecommendationView[];
 }

@@ -52,6 +52,13 @@ files. Timeout and denial scenarios exercise the same coordinator, retry,
 evidence, policy, and trace boundaries with deterministic fault triggers. See
 [the demo SOP](docs/DEMO.md) for the positive and negative paths.
 
+The workflow dashboard also defines an additive browser contract for future
+real-Agent manifest summaries, protected-resource access decisions, and
+`RECOMMEND_ONLY` outcomes. Until the backend Resource Gateway is implemented,
+these panels show explicit empty states and do not fabricate permission events.
+See the [architecture](docs/ARCHITECTURE.md#resource-access-contract) and
+[threat model](docs/threat-model.md) for the implementation boundary.
+
 The trusted mock email executor is the default. An optional Resend executor can
 deliver only to a configured team-owned override inbox; Agent-provided recipients
 never control real delivery.
