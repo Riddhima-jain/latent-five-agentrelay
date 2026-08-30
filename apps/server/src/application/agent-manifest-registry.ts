@@ -97,5 +97,10 @@ function cloneManifest(manifest: AgentManifest): AgentManifest {
     ...manifest,
     capabilities: [...manifest.capabilities],
     permissions: [...manifest.permissions],
+    toolPolicy: {
+      ...manifest.toolPolicy,
+      allowedTools: [...manifest.toolPolicy.allowedTools],
+      resourceScopes: manifest.toolPolicy.resourceScopes.map((scope) => ({ ...scope, permissions: [...scope.permissions] })),
+    },
   };
 }

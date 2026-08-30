@@ -21,6 +21,7 @@ function agent(overrides: Partial<AgentManifest> & Pick<AgentManifest, "agentId"
     capabilities: ["market_research"],
     permissions: ["read"],
     runnable: true,
+    toolPolicy: { agentId: overrides.agentId, allowedTools: [], resourceScopes: [] },
     ...overrides,
   };
 }
