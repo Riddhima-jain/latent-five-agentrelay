@@ -10,6 +10,8 @@ import { createEmailExecutor, resolveMockExecutorToken } from "./application/ema
 import { JsonExecutionStore } from "./adapters/json-execution-store.js";
 import { MockProtectedEmailService } from "./adapters/mock-protected-email-service.js";
 import { RelayWorkflowService } from "./application/relay-workflow-service.js";
+import { provisionDemoAgents } from "./application/demo-agent-provisioner.js";
+import { AgentManifestRegistry } from "./application/agent-manifest-registry.js";
 
 const config = loadConfig();
 await writeCodexConfig(config);
@@ -19,6 +21,9 @@ const workspaces = new WorkspaceManager(config.workspaceRoot);
 const runner = createRunner(config);
 const service = new AgentService(config, store, workspaces, runner);
 await service.initialize();
+const provisioned = await provisionDemoAgents(service);
+const manifestRegistry = new AgentManifestRegistry(service, provisioned.manifests);
+const relayAgents = await manifestRegistry.list();
 
 const relayStore = new RelayJsonStore(path.join(config.dataDirectory, "agentrelay.json"));
 // The protected-service credential is resolved once here so its effective value
@@ -45,12 +50,16 @@ const relayService = new RelayWorkflowService(
   undefined,
   undefined,
   async () => isModelConfigured(config) && await runner.isAvailable(),
+  relayAgents,
+  config.runtimeProvider === "container" ? `http://host.docker.internal:${config.port}/api/middleware/resources` : `http://127.0.0.1:${config.port}/api/middleware/resources`,
+  config.runtimeProvider === "container" ? "agentrelay-resource" : `${process.execPath} ${path.resolve("scripts/agentrelay-resource.mjs")}`,
+  () => manifestRegistry.list(),
   executionStore,
   [executorToken, config.resendApiKey].filter(Boolean),
 );
 await relayService.initialize();
 
-const app = await createApp(config, service, relayService);
+const app = await createApp(config, service, relayService, relayService.resourceGateway);
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, "Shutting down");

@@ -68,6 +68,8 @@ export function buildContainerRunArgs(
     String(config.containerPidsLimit),
     "--user",
     config.containerUser,
+    "--tmpfs",
+    "/app/fixtures/sales-recovery/protected:rw,noexec,nosuid,nodev,size=64k",
     "--env",
     "ARK_API_KEY",
     "--env",
@@ -78,6 +80,7 @@ export function buildContainerRunArgs(
     "HOME=/tmp",
     "--env",
     "NO_COLOR=1",
+    ...Object.keys(request.environment ?? {}).flatMap((name) => ["--env", name]),
     "--mount",
     "type=bind,src=" + request.workspacePath + ",dst=/workspace",
     "--mount",
@@ -149,7 +152,7 @@ export class ContainerCodexRunner implements AgentRunner {
       buildContainerRunArgs(request, this.config),
       {
         cwd: request.workspacePath,
-        env: this.childEnvironment(),
+        env: { ...this.childEnvironment(), ...request.environment },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );

@@ -25,13 +25,15 @@ async function createHarness(executor?: ExternalActionExecutor, secrets: string[
   const root = await mkdtemp(path.join(os.tmpdir(), "agentrelay-workflow-"));
   const store = new RelayJsonStore(path.join(root, "relay.json"));
   const executionStore = new InMemoryExecutionStore();
-  const service = new RelayWorkflowService(store, new WorkflowRunner(), executor ?? new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), executionStore, secrets);
+  const service = new RelayWorkflowService(store, new WorkflowRunner(), executor ?? new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), undefined, undefined, undefined, undefined, executionStore, secrets);
   await service.initialize();
   return { root, store, service, executionStore };
 }
 
 async function waitFor(service: RelayWorkflowService, id: string, statuses: string[]) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // The workflow runs asynchronously and competes with the rest of the suite.
+  // Allow enough headroom for parallel Vitest workers on slower machines.
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
     const session = await service.getSession(id);
     if (statuses.includes(session.status)) return session;
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -47,6 +49,8 @@ describe("RelayWorkflowService", () => {
     const pending = await waitFor(service, created.id, ["awaiting_approval"]);
     expect(pending.tasks.every((task) => task.status === "completed" || task.status === "approval_required")).toBe(true);
     expect(pending.evidence?.length).toBeGreaterThanOrEqual(4);
+    expect(pending.agentManifests).toHaveLength(4);
+    expect(pending.resourceAccessEvents?.map((event) => `${event.agentName}:${event.decision}`)).toEqual(expect.arrayContaining(["Research Agent:ALLOW", "Finance Agent:ALLOW", "Outreach Agent:ALLOW"]));
 
     const completed = await service.decideApproval(pending.approval!.id, "approve");
     expect(completed.status).toBe("completed");

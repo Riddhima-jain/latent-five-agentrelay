@@ -9,6 +9,7 @@ import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 import { registerGeminiResponsesAdapter } from "./gemini-responses-adapter.js";
 import { DemoRelaySessionService, type RelaySessionReader } from "./application/relay-session-service.js";
+import type { ResourceGatewayService } from "./application/resource-gateway-service.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -36,11 +37,12 @@ export async function createApp(
   config: AppConfig,
   service: AgentService,
   relayService: RelaySessionReader = new DemoRelaySessionService(),
+  resourceGateway?: ResourceGatewayService,
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
       level: config.logLevel,
-      redact: ["req.headers.authorization", "req.headers.cookie"],
+      redact: ["req.headers.authorization", "req.headers.cookie", "req.headers.x-agentrelay-grant"],
     },
     bodyLimit: 1_048_576,
   });
@@ -59,7 +61,8 @@ export async function createApp(
       !config.authToken ||
       !request.url.startsWith("/api/") ||
       request.url === "/api/health" ||
-      request.url === "/api/auth"
+      request.url === "/api/auth" ||
+      request.url.startsWith("/api/middleware/resources/")
     ) {
       return;
     }
@@ -156,6 +159,13 @@ export async function createApp(
     const { id } = relayApprovalParams.parse(request.params);
     const { decision } = relayDecisionBody.parse(request.body);
     return { session: await relayService.decideApproval(id, decision) };
+  });
+
+  if (resourceGateway) app.get("/api/middleware/resources/*", async (request, reply) => {
+    const resource = z.string().trim().min(1).max(240).parse((request.params as { "*"?: unknown })["*"]);
+    const grantId = z.string().trim().min(32).max(256).parse(request.headers["x-agentrelay-grant"]);
+    const result = await resourceGateway.readResource({ grantId, resource });
+    return reply.header("content-type", result.contentType).send(result.content);
   });
 
   if (config.nodeEnv === "production") {

@@ -19,6 +19,18 @@ export interface ParsedEvents {
   errors: string[];
 }
 
+export function describeCodexFailure(detail: string, config: AppConfig): string {
+  if (
+    config.modelProvider === "gemini" &&
+    /(?:\b429\b|too many requests|resource_exhausted|exceeded retry limit)/i.test(detail)
+  ) {
+    return "Gemini quota or rate limit exhausted (HTTP 429), not a Docker failure. " +
+      "Wait for the quota reset or use a GEMINI_API_KEY from a project with remaining " +
+      "quota for " + config.geminiModel + ".";
+  }
+  return detail;
+}
+
 export function buildCodexArgs(
   request: RunnerRequest,
   sandboxMode: AppConfig["codexSandboxMode"],
@@ -132,7 +144,7 @@ export class CodexRunner implements AgentRunner {
     const args = buildCodexArgs(request, this.config.codexSandboxMode);
     const child = spawn(this.config.codexBin, args, {
       cwd: request.workspacePath,
-      env: this.childEnvironment(),
+      env: { ...this.childEnvironment(), ...request.environment },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const settled = new Promise<void>((resolve) => {
@@ -209,7 +221,9 @@ export class CodexRunner implements AgentRunner {
       }
       if (exitCode !== 0) {
         const detail = parsed.errors.at(-1) ?? stderr.trim() ?? "No error detail";
-        throw new Error("Codex exited with code " + exitCode + ": " + detail);
+        throw new Error(
+          "Codex exited with code " + exitCode + ": " + describeCodexFailure(detail, this.config),
+        );
       }
       const output = parsed.messages.at(-1)?.trim();
       if (!output) {
