@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildCodexArgs, parseCodexEventLine } from "./codex-runner.js";
+import { buildCodexArgs, describeCodexFailure, parseCodexEventLine } from "./codex-runner.js";
+import { loadConfig } from "./config.js";
 
 describe("Codex runner protocol", () => {
   it("builds a new-session invocation", () => {
@@ -69,5 +70,20 @@ describe("Codex runner protocol", () => {
     expect(parsed.threadId).toBe("thread-123");
     expect(parsed.messages).toEqual(["Done."]);
     expect(parsed.usage).toEqual({ inputTokens: 10, outputTokens: 4 });
+  });
+
+  it("identifies Gemini quota failures without blaming Docker", () => {
+    const config = loadConfig({
+      MODEL_PROVIDER: "gemini",
+      GEMINI_API_KEY: "test-key",
+      GEMINI_MODEL: "gemini-test",
+    });
+
+    expect(describeCodexFailure("exceeded retry limit, last status: 429 Too Many Requests", config))
+      .toBe(
+        "Gemini quota or rate limit exhausted (HTTP 429), not a Docker failure. " +
+          "Wait for the quota reset or use a GEMINI_API_KEY from a project with remaining " +
+          "quota for gemini-test.",
+      );
   });
 });

@@ -212,6 +212,9 @@ npm install --global @openai/codex@0.111.0
 npm run dev
 ```
 
+`npm run dev` loads configuration from the repository-root `.env` file before
+starting the server.
+
 - Web UI: <http://localhost:5173>
 - API: <http://localhost:3000>
 

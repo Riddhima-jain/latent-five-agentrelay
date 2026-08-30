@@ -11,7 +11,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w @launchpad/server\" \"npm run dev -w @launchpad/web\"",
+    "dev": "concurrently -n server,web -c cyan,magenta \"node --env-file=.env --import tsx --watch apps/server/src/index.ts\" \"npm run dev -w @launchpad/web\"",
     "build": "npm run build -w @launchpad/web && npm run build -w @launchpad/server",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
