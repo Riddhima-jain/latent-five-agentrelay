@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { AgentService } from "./agent-service.js";
 import { createApp } from "./app.js";
 import { isModelConfigured, loadConfig, writeCodexConfig } from "./config.js";
@@ -32,6 +33,9 @@ const executorToken = resolveMockExecutorToken(config.executorToken);
 const mockProtectedEmailService = config.emailExecutor === "mock"
   ? new MockProtectedEmailService({ expectedToken: executorToken })
   : undefined;
+const salesRecoveryFixtureRoot = fileURLToPath(
+  new URL("../../../fixtures/sales-recovery", import.meta.url),
+);
 const emailExecutor = createEmailExecutor({
   provider: config.emailExecutor,
   executorToken,
@@ -46,7 +50,7 @@ const relayService = new RelayWorkflowService(
   runner,
   emailExecutor,
   config.workspaceRoot,
-  path.resolve("fixtures/sales-recovery"),
+  salesRecoveryFixtureRoot,
   undefined,
   undefined,
   async () => isModelConfigured(config) && await runner.isAvailable(),

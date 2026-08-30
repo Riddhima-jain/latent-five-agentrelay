@@ -9,3 +9,4 @@
 - Completed locally: P3 Resource Gateway Fastify route, run-grant wiring, trace/audit events, and safe grant-header redaction. Pending validation/commit.
 - Completed locally: P2 runtime resource helper and opaque per-run adapter configuration. Pending validation/commit.
 - Constraint: real Agent IDs/bootstrap are supplied by Person 5; implementation must keep missing IDs explicit rather than creating substitutes.
+- Fixed: fixture root is resolved from the server entry module, so workspace-launched server commands use the repository `fixtures/sales-recovery` directory rather than `apps/server/fixtures`; server typecheck and 108-test suite pass. Pending commit.
