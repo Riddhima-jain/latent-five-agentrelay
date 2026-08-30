@@ -10,7 +10,7 @@ export class AgentManifestRegistry {
     if (!manifest) return null;
     let agent;
     try { agent = this.agentService.getAgent(agentId); } catch { throw new HttpError(409, `AGENT_NOT_FOUND: ${agentId}`); }
-    return { ...manifest, runnable: agent.status === "ready", capabilities: [...manifest.capabilities], permissions: [...manifest.permissions], ...(manifest.toolPolicy ? { toolPolicy: { allowedTools: [...manifest.toolPolicy.allowedTools], resourceScopes: manifest.toolPolicy.resourceScopes.map((scope) => ({ ...scope, permissions: [...scope.permissions] })) } } : {}) };
+    return cloneManifest({ ...manifest, runnable: agent.status === "ready" });
   }
 
   async list(): Promise<AgentManifest[]> {
@@ -26,6 +26,22 @@ export class AgentManifestRegistry {
     const manifest = await this.get(agentId);
     if (!manifest) throw new HttpError(409, `AGENT_NOT_REGISTERED: ${agentId}`);
     if (!manifest.runnable) throw new HttpError(409, `AGENT_NOT_RUNNABLE: ${agentId}`);
-    return manifest;
+    return cloneManifest(manifest);
   }
+}
+
+/** Never expose registry-owned nested policy arrays to callers. */
+function cloneManifest(manifest: AgentManifest): AgentManifest {
+  return {
+    ...manifest,
+    capabilities: [...manifest.capabilities],
+    permissions: [...manifest.permissions],
+    ...(manifest.toolPolicy ? {
+      toolPolicy: {
+        ...manifest.toolPolicy,
+        allowedTools: [...manifest.toolPolicy.allowedTools],
+        resourceScopes: manifest.toolPolicy.resourceScopes.map((scope) => ({ ...scope, permissions: [...scope.permissions] })),
+      },
+    } : {}),
+  };
 }

@@ -42,7 +42,7 @@ export async function createApp(
   const app = Fastify({
     logger: {
       level: config.logLevel,
-      redact: ["req.headers.authorization", "req.headers.cookie"],
+      redact: ["req.headers.authorization", "req.headers.cookie", "req.headers.x-agentrelay-grant"],
     },
     bodyLimit: 1_048_576,
   });
