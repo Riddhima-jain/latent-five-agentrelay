@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentRunner, RunnerRequest } from "../types.js";
+import { InMemoryExecutionStore } from "../adapters/in-memory-execution-store.js";
 import { MockEmailExecutor } from "./email-executor.js";
 import { RelayJsonStore } from "./relay-store.js";
 import { RelayWorkflowService } from "./relay-workflow-service.js";
@@ -20,9 +21,10 @@ class WorkflowRunner implements AgentRunner {
 async function createHarness() {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentrelay-workflow-"));
   const store = new RelayJsonStore(path.join(root, "relay.json"));
-  const service = new RelayWorkflowService(store, new WorkflowRunner(), new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id");
+  const executionStore = new InMemoryExecutionStore();
+  const service = new RelayWorkflowService(store, new WorkflowRunner(), new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), executionStore);
   await service.initialize();
-  return { root, store, service };
+  return { root, store, service, executionStore };
 }
 
 async function waitFor(service: RelayWorkflowService, id: string, statuses: string[]) {
@@ -48,6 +50,22 @@ describe("RelayWorkflowService", () => {
     expect(completed.receipts).toHaveLength(1);
     expect(await store.listReceipts(created.id)).toHaveLength(1);
     await expect(service.decideApproval(pending.approval!.id, "approve")).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("routes the approved action through the enforced ExecutionService boundary", async () => {
+    const { service, executionStore } = await createHarness();
+    const created = await service.createSession({ scenario: "normal" });
+    const pending = await waitFor(service, created.id, ["awaiting_approval"]);
+    const completed = await service.decideApproval(pending.approval!.id, "approve");
+
+    const types = completed.trace.map((event) => event.type);
+    expect(types).toContain("action.execution_started");
+    expect(types).toContain("action.executed");
+    expect(types.filter((type) => type === "action.executed")).toHaveLength(1);
+
+    const ledgerKey = `${created.id}|${pending.approval!.actionId}|${pending.approval!.actionHash}`;
+    const record = await executionStore.get(ledgerKey);
+    expect(record?.status).toBe("succeeded");
   });
 
   it("persists an approval-ready session across service restart", async () => {

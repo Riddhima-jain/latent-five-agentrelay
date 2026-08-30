@@ -4,17 +4,22 @@ import { randomUUID } from "node:crypto";
 import type { ApprovedAction, ProposedAction } from "../domain/action.js";
 import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-workflow.js";
 import type { ExternalActionExecutor } from "../domain/ports.js";
+import type { SendEmailPayload } from "../domain/protected-action.js";
 import type { SharedSession } from "../domain/session.js";
 import type { AgentTask } from "../domain/task.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
 import { HttpError } from "../errors.js";
 import type { AgentRunner } from "../types.js";
+import { InMemoryExecutionStore } from "../adapters/in-memory-execution-store.js";
 import { payloadHashFor } from "./approval-service.js";
 import { decideAutomation } from "./automation-decision-service.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
 import { LocalControlledFixtureProvider } from "./controlled-fixtures.js";
 import { Coordinator } from "./coordinator.js";
-import { idempotencyKeyFor } from "./email-executor.js";
+import type { ExecutionStore } from "./execution-ports.js";
+import { ExecutionService } from "./execution-service.js";
+import { RecoveryService } from "./recovery-service.js";
+import { RelayApprovalVerifier } from "./relay-approval-verifier.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
 import type { CreateRelaySessionInput, RelayApprovalView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
 import { RelayJsonStore } from "./relay-store.js";
@@ -25,6 +30,10 @@ export class RelayWorkflowService implements RelaySessionReader {
   private readonly adapter: CodexAgentAdapter;
   private readonly active = new Map<string, Promise<void>>();
   private readonly decisions = new Set<string>();
+  private readonly approvalVerifier: RelayApprovalVerifier;
+  private readonly recovery = new RecoveryService();
+  private readonly executionStore: ExecutionStore;
+  private readonly baseSecrets: readonly string[];
 
   constructor(
     private readonly store: RelayJsonStore,
@@ -35,7 +44,12 @@ export class RelayWorkflowService implements RelaySessionReader {
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly createId: () => string = () => randomUUID(),
     private readonly runtimeAvailable: () => Promise<boolean> = () => Promise.resolve(true),
+    executionStore: ExecutionStore = new InMemoryExecutionStore(),
+    secrets: readonly string[] = [],
   ) {
+    this.approvalVerifier = new RelayApprovalVerifier(store);
+    this.executionStore = executionStore;
+    this.baseSecrets = secrets;
     this.adapter = new CodexAgentAdapter(runner, SALES_RECOVERY_AGENTS.map((agent) => ({
       agentId: agent.agentId,
       workspacePath: path.join(this.workspaceRootPath, ".agentrelay", agent.agentId),
@@ -114,18 +128,35 @@ export class RelayWorkflowService implements RelaySessionReader {
       }
       await this.store.saveApproval({ ...approval, status: "approved", approvedAt: this.now() });
       await this.trace(session, "approval.granted", { taskId: action.taskId, agentId: action.producerAgentId });
-      const approved: ApprovedAction = { ...action, payloadHash: approval.payloadHash, idempotencyKey: idempotencyKeyFor(action.id, approval.payloadHash) };
-      await this.trace(session, "action.execution_started", { taskId: action.taskId, agentId: action.producerAgentId });
-      try {
-        const result = await this.actionExecutor.execute(approved);
-        if (result.status !== "succeeded") throw new Error(result.error ?? "Protected action failed");
-        await this.store.save({ ...session, status: "completed", updatedAt: this.now() });
-        await this.trace(session, "action.executed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { externalReference: result.externalReference } });
-      } catch (error) {
-        await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
-        await this.trace(session, "action.failed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reason: error instanceof Error ? error.message : String(error) } });
-        throw new HttpError(502, "Protected email delivery failed; approval remains recorded");
+      const payload = action.payload as Partial<SendEmailPayload>;
+      const approved: ApprovedAction = {
+        ...action,
+        payloadHash: approval.payloadHash,
+        idempotencyKey: `${session.id}|${action.id}|${approval.payloadHash}`,
+      };
+      // ExecutionService owns approval enforcement, the atomic idempotency ledger,
+      // timeout/retry, and the redacted action.* / retry.* trace events (KTD10, KTD11).
+      const execution = new ExecutionService({
+        verifier: this.approvalVerifier,
+        store: this.executionStore,
+        executor: this.actionExecutor,
+        recovery: this.recovery,
+        sink: this.store,
+        traceId: session.traceId,
+        secrets: [...this.baseSecrets, typeof payload.recipient === "string" ? payload.recipient : ""].filter(Boolean),
+        maxAttempts: 3,
+        timeoutMs: 10_000,
+      });
+      const outcome = await execution.run(approved, "REQUIRE_APPROVAL");
+      if (outcome.terminal) {
+        await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
+        await this.trace(session, "session.failed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reason: outcome.reason ?? "Protected action failed" } });
+        throw new HttpError(502, "Protected action failed; approval remains recorded");
       }
+      if (outcome.result.status !== "succeeded") {
+        throw new HttpError(409, "Protected action is already in progress");
+      }
+      await this.store.save({ ...session, status: "completed", updatedAt: this.now() });
       return this.getSession(session.id);
     } finally {
       this.decisions.delete(approvalId);

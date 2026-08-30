@@ -7,6 +7,7 @@ import { JsonStore } from "./store.js";
 import { WorkspaceManager } from "./workspace.js";
 import { RelayJsonStore } from "./application/relay-store.js";
 import { createEmailExecutor } from "./application/email-executor.js";
+import { JsonExecutionStore } from "./adapters/json-execution-store.js";
 import { RelayWorkflowService } from "./application/relay-workflow-service.js";
 
 const config = loadConfig();
@@ -21,10 +22,13 @@ await service.initialize();
 const relayStore = new RelayJsonStore(path.join(config.dataDirectory, "agentrelay.json"));
 const emailExecutor = createEmailExecutor({
   provider: config.emailExecutor,
+  executorToken: config.executorToken,
   resendApiKey: config.resendApiKey,
   resendFrom: config.resendFrom,
   resendToOverride: config.resendToOverride,
 }, relayStore);
+const executionStore = new JsonExecutionStore(path.join(config.dataDirectory, "agentrelay-executions.json"));
+await executionStore.initialize();
 const relayService = new RelayWorkflowService(
   relayStore,
   runner,
@@ -34,6 +38,8 @@ const relayService = new RelayWorkflowService(
   undefined,
   undefined,
   async () => isModelConfigured(config) && await runner.isAvailable(),
+  executionStore,
+  [config.executorToken, config.resendApiKey].filter(Boolean),
 );
 await relayService.initialize();
 
