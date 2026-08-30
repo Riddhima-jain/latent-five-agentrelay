@@ -55,6 +55,9 @@ export interface RelaySessionView {
   trace: RelayTraceView[];
   evidence?: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; status: string; createdAt: string }>;
   receipts?: Array<{ actionId: string; provider: "mock" | "resend"; externalReference: string; acceptedAt: string }>;
+  agentManifests?: Array<{ agentId: string; name: string; capabilities: string[]; runnable: boolean; allowedTools: string[]; resourceScopes: string[] }>;
+  resourceAccessEvents?: Array<{ id: string; timestamp: string; agentId: string; agentName: string; taskId: string; tool: "resource.read"; resource: string; operation: "read"; decision: "ALLOW" | "DENY"; reason: string }>;
+  recommendations?: Array<{ id: string; taskId: string; actionType: string; summary: string; decision: "RECOMMEND_ONLY"; reasons: string[]; supportingEvidenceIds: string[] }>;
 }
 
 export interface CreateRelaySessionInput { goal?: string | undefined; scenario?: "normal" | "timeout" | "denial" | undefined }

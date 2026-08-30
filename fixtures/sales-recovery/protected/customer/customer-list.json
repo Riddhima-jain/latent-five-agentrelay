@@ -1,0 +1,8 @@
+{
+  "pilotCustomers": [
+    {
+      "name": "Acme Retail",
+      "email": "pilot@example.com"
+    }
+  ]
+}

@@ -37,10 +37,12 @@ COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/web/dist ./apps/web/dist
 COPY fixtures ./fixtures
+COPY scripts/agentrelay-resource.mjs /usr/local/bin/agentrelay-resource
 
-RUN test -f /app/fixtures/sales-recovery/market-report.json \
-    && test -f /app/fixtures/sales-recovery/finance-report.csv \
-    && test -f /app/fixtures/sales-recovery/customer-list.json \
+RUN test -f /app/fixtures/sales-recovery/protected/market/market-report.json \
+    && test -f /app/fixtures/sales-recovery/protected/finance/finance-report.csv \
+    && test -f /app/fixtures/sales-recovery/protected/customer/customer-list.json \
+    && chmod 755 /usr/local/bin/agentrelay-resource \
     && mkdir -p /app/data /app/workspaces /app/codex-home \
     && chown -R node:node /app
 

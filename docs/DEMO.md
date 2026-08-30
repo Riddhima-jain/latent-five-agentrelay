@@ -1,14 +1,16 @@
 # AgentRelay demo SOP
 
 This SOP exercises real Codex workflow execution and the real middleware path.
-Use only the controlled fixtures committed under `fixtures/sales-recovery/`.
+Use only the controlled fixtures committed under `fixtures/sales-recovery/protected/`.
 
 ## Setup
 
 1. Configure Ark or Gemini as documented in the [README](../README.md).
 2. Keep `EMAIL_EXECUTOR=mock` for the reproducible judging path.
-3. Start the platform with `npm run poc` and open <http://localhost:3000>.
-4. Open **AgentRelay** in the sidebar.
+3. Run `npm run seed:agentrelay-demo` and confirm four persisted Agent IDs.
+4. Run `npm run reset:agentrelay-demo` before a recorded demonstration.
+5. Start the platform with `npm run poc` and open <http://localhost:3000>.
+6. Open **AgentRelay** in the sidebar.
 
 ## Positive path
 

@@ -73,6 +73,7 @@ export interface RunnerRequest {
   workspacePath: string;
   prompt: string;
   threadId: string | null;
+  environment?: Record<string, string>;
 }
 
 export interface AgentRunner {

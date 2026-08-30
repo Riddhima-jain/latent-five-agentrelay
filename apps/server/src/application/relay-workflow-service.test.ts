@@ -42,6 +42,8 @@ describe("RelayWorkflowService", () => {
     const pending = await waitFor(service, created.id, ["awaiting_approval"]);
     expect(pending.tasks.every((task) => task.status === "completed" || task.status === "approval_required")).toBe(true);
     expect(pending.evidence?.length).toBeGreaterThanOrEqual(4);
+    expect(pending.agentManifests).toHaveLength(4);
+    expect(pending.resourceAccessEvents?.map((event) => `${event.agentName}:${event.decision}`)).toEqual(expect.arrayContaining(["Research Agent:ALLOW", "Finance Agent:ALLOW", "Outreach Agent:ALLOW"]));
 
     const completed = await service.decideApproval(pending.approval!.id, "approve");
     expect(completed.status).toBe("completed");
