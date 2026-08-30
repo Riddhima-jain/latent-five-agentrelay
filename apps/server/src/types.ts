@@ -73,6 +73,8 @@ export interface RunnerRequest {
   workspacePath: string;
   prompt: string;
   threadId: string | null;
+  /** Per-run private runtime configuration; never included in an Agent prompt. */
+  environment?: Record<string, string>;
 }
 
 export interface AgentRunner {

@@ -72,6 +72,7 @@ export function buildContainerRunArgs(
     "ARK_API_KEY",
     "--env",
     "GEMINI_API_KEY",
+    ...(request.environment ? Object.entries(request.environment).flatMap(([key, value]) => ["--env", `${key}=${value}`]) : []),
     "--env",
     "CODEX_HOME=/codex-home",
     "--env",
@@ -149,7 +150,7 @@ export class ContainerCodexRunner implements AgentRunner {
       buildContainerRunArgs(request, this.config),
       {
         cwd: request.workspacePath,
-        env: this.childEnvironment(),
+        env: this.childEnvironment(request.environment),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -237,7 +238,7 @@ export class ContainerCodexRunner implements AgentRunner {
     }
   }
 
-  private childEnvironment(): NodeJS.ProcessEnv {
+  private childEnvironment(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     const environment: NodeJS.ProcessEnv = {
       ARK_API_KEY: this.config.arkApiKey,
       GEMINI_API_KEY: this.config.geminiApiKey,
@@ -253,6 +254,7 @@ export class ContainerCodexRunner implements AgentRunner {
     ] as const) {
       if (process.env[name] !== undefined) environment[name] = process.env[name];
     }
+    Object.assign(environment, overrides);
     return environment;
   }
 }

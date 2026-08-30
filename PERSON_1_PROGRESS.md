@@ -7,4 +7,5 @@
 - Completed unblocked P3 scope: deterministic resource ToolPolicy, immutable scoped AccessGrants, protected fixture store, and Resource Gateway (commit `aa8106a`). Blocked on P5 for HTTP route, trace events, and UI.
 - Validation: full server suite (111 tests) and server build pass after P1–P3 changes.
 - Completed locally: P3 Resource Gateway Fastify route, run-grant wiring, trace/audit events, and safe grant-header redaction. Pending validation/commit.
+- Completed locally: P2 runtime resource helper and opaque per-run adapter configuration. Pending validation/commit.
 - Constraint: real Agent IDs/bootstrap are supplied by Person 5; implementation must keep missing IDs explicit rather than creating substitutes.

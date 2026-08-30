@@ -36,6 +36,7 @@ export class RelayWorkflowService implements RelaySessionReader {
     private readonly createId: () => string = () => randomUUID(),
     private readonly runtimeAvailable: () => Promise<boolean> = () => Promise.resolve(true),
     private readonly accessGrantService?: AccessGrantService,
+    private readonly resourceGatewayBaseUrl?: string,
   ) {
     this.adapter = new CodexAgentAdapter(runner, SALES_RECOVERY_AGENTS.map((agent) => ({
       agentId: agent.agentId,
@@ -77,7 +78,7 @@ export class RelayWorkflowService implements RelaySessionReader {
         traceSink: this.store,
         ...(this.accessGrantService ? { accessGrantService: this.accessGrantService } : {}),
       },
-      this.now, undefined, resourcesForTask,
+      this.now, undefined, resourcesForTask, undefined, this.resourceGatewayBaseUrl,
     );
     const started = await coordinator.start(session);
     if (!started.started) throw new Error(`Invalid sales recovery workflow: ${started.errors.map((error) => error.message).join("; ")}`);

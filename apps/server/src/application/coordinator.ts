@@ -49,6 +49,7 @@ export class Coordinator {
     private readonly knownCapabilities: ReadonlySet<string> = new Set(agents.flatMap((agent) => agent.capabilities)),
     private readonly resourcesForTask: (task: AgentTask) => readonly string[] = () => [],
     private readonly manifestRegistry?: AgentManifestRegistry,
+    private readonly resourceGatewayBaseUrl?: string,
   ) {}
 
   async start(session: SharedSession): Promise<CoordinatorStartResult> {
@@ -149,6 +150,7 @@ export class Coordinator {
       allowedResources: [...this.resourcesForTask(task)],
       dependencyEvidence: evidence.filter((record) => record.sessionId === this.session?.id && record.status === "accepted"),
       ...(accessGrant ? { accessGrant } : {}),
+      ...(this.resourceGatewayBaseUrl ? { resourceAccess: { gatewayBaseUrl: this.resourceGatewayBaseUrl, allowedResourceHandles: [...this.resourcesForTask(task)] } } : {}),
     };
   }
 

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { CodexAgentAdapter, workflowRunnerId } from "./codex-agent-adapter.js";
 import type { AgentRunner, RunnerRequest } from "../types.js";
 import type { AgentTask } from "../domain/task.js";
@@ -40,6 +43,18 @@ describe("CodexAgentAdapter", () => {
     await adapter.execute("research-agent", { ...task, sessionId: "workflow-2" }, { ...context, sessionId: "workflow-2" });
     expect(requests.map((request) => request.threadId)).toEqual([null, "workflow-thread", null]);
     expect(requests[2]?.prompt).not.toContain("workflow-1");
+  });
+
+  it("configures the resource helper with an opaque grant outside the prompt", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "agentrelay-helper-"));
+    try {
+      const { runner, requests } = runnerWith(JSON.stringify({ summary: "ok", evidence: [], proposedActions: [] }));
+      const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: workspace }]);
+      await adapter.execute("research-agent", task, { ...context, resourceAccess: { gatewayBaseUrl: "http://127.0.0.1:3000", allowedResourceHandles: ["market/market-report.json"] }, accessGrant: { id: "opaque-grant", sessionId: "workflow-1", taskId: "research", agentId: "research-agent", allowedTools: ["resource.read"], resourceScopes: [], status: "active", createdAt: "2026-08-30T00:00:00.000Z" } });
+      expect(requests[0]?.environment).toEqual({ AGENTRELAY_GATEWAY_BASE_URL: "http://127.0.0.1:3000", AGENTRELAY_GRANT_ID: "opaque-grant" });
+      expect(requests[0]?.prompt).not.toContain("opaque-grant");
+      expect(requests[0]?.prompt).toContain("agentrelay-resource.mjs read");
+    } finally { await rm(workspace, { recursive: true, force: true }); }
   });
 
   it("fails closed when Codex returns prose or a malformed structured result", async () => {

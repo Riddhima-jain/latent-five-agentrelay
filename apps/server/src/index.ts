@@ -63,6 +63,7 @@ const relayService = new RelayWorkflowService(
   undefined,
   async () => isModelConfigured(config) && await runner.isAvailable(),
   accessGrants,
+  `http://127.0.0.1:${config.port}`,
 );
 await relayService.initialize();
 
