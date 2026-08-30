@@ -21,7 +21,16 @@ flowchart LR
     Runner -->|ECS| Process["Codex child process"]
     Container --> Ark["Volcengine Ark"]
     Process --> Ark
+
+    Manifest["Agent manifest summaries"] -. planned .-> Relay
+    Relay -. planned grant issuance .-> Gateway["Resource Gateway"]
+    Gateway -. logical reads .-> Protected["Protected Resource Store"]
+    Gateway -. access decisions .-> RelayStore
 ```
+
+The dashed Resource Gateway path is an integration contract represented by the
+web UI but is not backend enforcement yet. Until that path is implemented,
+AgentRelay must not claim run-scoped resource isolation.
 
 ## Components
 
@@ -76,6 +85,27 @@ than silently resumed or reported as successful.
 - Executors accept only `ApprovedAction`; they revalidate the hash and enforce
   an idempotency key before creating a receipt.
 - Resend credentials and the real recipient override remain server-side.
+
+### Resource-access contract
+
+The dashboard accepts optional, non-sensitive projections for registered Agent
+manifests, resource-access decisions, and recommendation-only policy outcomes.
+The browser contract deliberately excludes grant identifiers, grant tokens,
+authorization headers, provider credentials, and host filesystem paths.
+
+The planned trusted flow is:
+
+```text
+real Starter Kit Agent
+  -> server-issued run-scoped grant
+  -> Resource Gateway
+  -> deterministic tool/resource policy
+  -> protected logical resource
+```
+
+The current controlled fixture adapter materializes approved demo fixtures into
+workflow workspaces. It is not the planned Resource Gateway boundary and must
+be replaced before demonstrating cross-Agent resource denial.
 
 ### Runtime providers
 
