@@ -1,15 +1,31 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { ApprovedAction, ActionResult } from "../domain/action.js";
 import type { ExternalActionExecutor } from "../domain/ports.js";
 import type { SendEmailPayload } from "../domain/protected-action.js";
+import { MockActionExecutor } from "../adapters/mock-action-executor.js";
+import { MockProtectedEmailService } from "../adapters/mock-protected-email-service.js";
 import { payloadHashFor } from "./approval-service.js";
 import type { RelayActionReceipt, RelayJsonStore } from "./relay-store.js";
 
 export interface EmailExecutorConfig {
   provider: "mock" | "resend";
+  /** Pins the mock protected-service credential; empty means a per-boot ephemeral token. Unused by Resend. */
+  executorToken: string;
   resendApiKey: string;
   resendFrom: string;
   resendToOverride: string;
+}
+
+/**
+ * The effective mock protected-service credential: the configured value when it
+ * is a real 24+ char token, otherwise a per-boot ephemeral one. The Agent
+ * Runtime never receives either; callers add the return value to the trace
+ * redaction secrets so it can never surface in a persisted trace or ledger.
+ */
+export function resolveMockExecutorToken(configured: string): string {
+  return configured && configured.length >= 24 && !configured.startsWith("replace-")
+    ? configured
+    : `mock-executor-${randomUUID()}-${randomUUID()}`;
 }
 
 abstract class BaseEmailExecutor implements ExternalActionExecutor {
@@ -35,9 +51,38 @@ abstract class BaseEmailExecutor implements ExternalActionExecutor {
   }
 }
 
+/**
+ * Mock delivery routes through the token-gated `MockProtectedEmailService` via
+ * the trusted `MockActionExecutor` (the sole token holder), so even the default
+ * demo path proves the hard enforcement boundary (plan R1/R4). The receipt the
+ * session view renders is derived from the protected service's `messageId`.
+ * When no token is pinned, a per-boot ephemeral value is used — the Agent
+ * Runtime never receives it, so isolation still holds.
+ */
 export class MockEmailExecutor extends BaseEmailExecutor {
+  private readonly protectedExecutor: MockActionExecutor;
+
+  constructor(
+    store: RelayJsonStore,
+    options: { token?: string | undefined; service?: MockProtectedEmailService | undefined } = {},
+    now?: () => string,
+  ) {
+    super(store, now);
+    const token = resolveMockExecutorToken(options.token ?? "");
+    const service = options.service ?? new MockProtectedEmailService({ expectedToken: token });
+    this.protectedExecutor = new MockActionExecutor({ token, service });
+  }
+
   protected async deliver(action: ApprovedAction): Promise<RelayActionReceipt> {
-    return { actionId: action.id, sessionId: action.sessionId, provider: "mock", externalReference: `mock-email-${randomUUID()}`, acceptedAt: this.now(), idempotencyKey: action.idempotencyKey };
+    const result = await this.protectedExecutor.execute(action);
+    return {
+      actionId: action.id,
+      sessionId: action.sessionId,
+      provider: "mock",
+      externalReference: result.externalReference ?? "",
+      acceptedAt: this.now(),
+      idempotencyKey: action.idempotencyKey,
+    };
   }
 }
 
@@ -53,10 +98,12 @@ export class ResendEmailExecutor extends BaseEmailExecutor {
   }
 }
 
-export function createEmailExecutor(config: EmailExecutorConfig, store: RelayJsonStore): ExternalActionExecutor {
-  return config.provider === "resend" ? new ResendEmailExecutor(store, config) : new MockEmailExecutor(store);
-}
-
-export function idempotencyKeyFor(actionId: string, payloadHash: string): string {
-  return createHash("sha256").update(`${actionId}:${payloadHash}`).digest("hex");
+export function createEmailExecutor(
+  config: EmailExecutorConfig,
+  store: RelayJsonStore,
+  mockService?: MockProtectedEmailService,
+): ExternalActionExecutor {
+  return config.provider === "resend"
+    ? new ResendEmailExecutor(store, config)
+    : new MockEmailExecutor(store, { token: config.executorToken || undefined, service: mockService });
 }

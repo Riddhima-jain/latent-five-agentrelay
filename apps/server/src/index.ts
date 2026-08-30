@@ -6,7 +6,9 @@ import { createRunner } from "./runner-factory.js";
 import { JsonStore } from "./store.js";
 import { WorkspaceManager } from "./workspace.js";
 import { RelayJsonStore } from "./application/relay-store.js";
-import { createEmailExecutor } from "./application/email-executor.js";
+import { createEmailExecutor, resolveMockExecutorToken } from "./application/email-executor.js";
+import { JsonExecutionStore } from "./adapters/json-execution-store.js";
+import { MockProtectedEmailService } from "./adapters/mock-protected-email-service.js";
 import { RelayWorkflowService } from "./application/relay-workflow-service.js";
 import { provisionDemoAgents } from "./application/demo-agent-provisioner.js";
 import { AgentManifestRegistry } from "./application/agent-manifest-registry.js";
@@ -24,12 +26,21 @@ const manifestRegistry = new AgentManifestRegistry(service, provisioned.manifest
 const relayAgents = await manifestRegistry.list();
 
 const relayStore = new RelayJsonStore(path.join(config.dataDirectory, "agentrelay.json"));
+// The protected-service credential is resolved once here so its effective value
+// (configured or per-boot ephemeral) can be added to the trace redaction secrets.
+const executorToken = resolveMockExecutorToken(config.executorToken);
+const mockProtectedEmailService = config.emailExecutor === "mock"
+  ? new MockProtectedEmailService({ expectedToken: executorToken })
+  : undefined;
 const emailExecutor = createEmailExecutor({
   provider: config.emailExecutor,
+  executorToken,
   resendApiKey: config.resendApiKey,
   resendFrom: config.resendFrom,
   resendToOverride: config.resendToOverride,
-}, relayStore);
+}, relayStore, mockProtectedEmailService);
+const executionStore = new JsonExecutionStore(path.join(config.dataDirectory, "agentrelay-executions.json"));
+await executionStore.initialize();
 const relayService = new RelayWorkflowService(
   relayStore,
   runner,
@@ -43,6 +54,8 @@ const relayService = new RelayWorkflowService(
   config.runtimeProvider === "container" ? `http://host.docker.internal:${config.port}/api/middleware/resources` : `http://127.0.0.1:${config.port}/api/middleware/resources`,
   config.runtimeProvider === "container" ? "agentrelay-resource" : `${process.execPath} ${path.resolve("scripts/agentrelay-resource.mjs")}`,
   () => manifestRegistry.list(),
+  executionStore,
+  [executorToken, config.resendApiKey].filter(Boolean),
 );
 await relayService.initialize();
 

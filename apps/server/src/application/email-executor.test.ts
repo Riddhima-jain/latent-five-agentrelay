@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ApprovedAction } from "../domain/action.js";
 import { payloadHashFor } from "./approval-service.js";
-import { MockEmailExecutor, ResendEmailExecutor, idempotencyKeyFor } from "./email-executor.js";
+import { MockEmailExecutor, ResendEmailExecutor, createEmailExecutor } from "./email-executor.js";
 import { RelayJsonStore } from "./relay-store.js";
 
 async function harness() {
@@ -13,17 +13,29 @@ async function harness() {
   await store.initialize();
   const proposed = { id: "a1", sessionId: "s1", taskId: "outreach", producerAgentId: "outreach-agent", type: "SEND_EMAIL", target: "test", payload: { recipient: "customer@example.com", subject: "Recovery", body: "Hello" }, createdAt: "2026-01-01T00:00:00Z" };
   const payloadHash = payloadHashFor(proposed);
-  return { store, action: { ...proposed, payloadHash, idempotencyKey: idempotencyKeyFor(proposed.id, payloadHash) } satisfies ApprovedAction };
+  const idempotencyKey = `${proposed.sessionId}|${proposed.id}|${payloadHash}`;
+  return { store, action: { ...proposed, payloadHash, idempotencyKey } satisfies ApprovedAction };
 }
 
 describe("email executors", () => {
-  it("executes the mock action once for repeated idempotency keys", async () => {
+  it("executes the mock action once for repeated idempotency keys via the token-gated service", async () => {
     const { store, action } = await harness();
-    const executor = new MockEmailExecutor(store, () => "2026-01-01T00:00:00Z");
+    const executor = new MockEmailExecutor(store, {}, () => "2026-01-01T00:00:00Z");
     const first = await executor.execute(action);
     const second = await executor.execute(action);
     expect(second.externalReference).toBe(first.externalReference);
     expect(await store.listReceipts("s1")).toHaveLength(1);
+  });
+
+  it("falls back to an ephemeral token when the configured token is a replace- placeholder", async () => {
+    const { store, action } = await harness();
+    // The shipped .env.example value; MockActionExecutor rejects the `replace-` prefix,
+    // so createEmailExecutor must not pin it — a fresh clone still needs to boot.
+    const executor = createEmailExecutor(
+      { provider: "mock", executorToken: "replace-with-a-separate-long-random-executor-token", resendApiKey: "", resendFrom: "", resendToOverride: "" },
+      store,
+    );
+    expect((await executor.execute(action)).status).toBe("succeeded");
   });
 
   it("rejects an action modified after approval", async () => {
@@ -35,10 +47,31 @@ describe("email executors", () => {
   it("uses the configured Resend override and idempotency header", async () => {
     const { store, action } = await harness();
     const request = vi.fn(async () => new Response(JSON.stringify({ id: "email_123" }), { status: 200, headers: { "content-type": "application/json" } }));
-    const executor = new ResendEmailExecutor(store, { provider: "resend", resendApiKey: "secret-test-key", resendFrom: "AgentRelay <demo@example.com>", resendToOverride: "team@example.com" }, () => "2026-01-01T00:00:00Z", request);
+    const executor = new ResendEmailExecutor(store, { provider: "resend", executorToken: "", resendApiKey: "secret-test-key", resendFrom: "AgentRelay <demo@example.com>", resendToOverride: "team@example.com" }, () => "2026-01-01T00:00:00Z", request);
     expect((await executor.execute(action)).externalReference).toBe("email_123");
     const [, options] = request.mock.calls[0]!;
     expect(JSON.parse(String(options?.body)).to).toEqual(["team@example.com"]);
     expect(new Headers(options?.headers).get("Idempotency-Key")).toBe(action.idempotencyKey);
+  });
+
+  it("sends a stable Idempotency-Key across a retry and delivers exactly once", async () => {
+    const { store, action } = await harness();
+    let call = 0;
+    const request = vi.fn(async () => {
+      call += 1;
+      return call === 1
+        ? new Response("upstream 500", { status: 500 })
+        : new Response(JSON.stringify({ id: "email_retry_ok" }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const config = { provider: "resend" as const, executorToken: "", resendApiKey: "k", resendFrom: "AgentRelay <demo@example.com>", resendToOverride: "team@example.com" };
+    const executor = new ResendEmailExecutor(store, config, () => "2026-01-01T00:00:00Z", request);
+
+    await expect(executor.execute(action)).rejects.toThrow(/Resend delivery failed/);
+    expect((await executor.execute(action)).externalReference).toBe("email_retry_ok");
+
+    expect(request).toHaveBeenCalledTimes(2);
+    const keys = request.mock.calls.map(([, options]) => new Headers(options?.headers).get("Idempotency-Key"));
+    expect(keys).toEqual([action.idempotencyKey, action.idempotencyKey]);
+    expect(await store.listReceipts("s1")).toHaveLength(1);
   });
 });

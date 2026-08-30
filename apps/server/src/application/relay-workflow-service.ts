@@ -5,11 +5,13 @@ import type { ApprovedAction, ProposedAction } from "../domain/action.js";
 import type { AgentManifest } from "../domain/capability.js";
 import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-workflow.js";
 import type { ExternalActionExecutor } from "../domain/ports.js";
+import type { SendEmailPayload } from "../domain/protected-action.js";
 import type { SharedSession } from "../domain/session.js";
 import type { AgentTask } from "../domain/task.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
 import { HttpError } from "../errors.js";
 import type { AgentRunner } from "../types.js";
+import { InMemoryExecutionStore } from "../adapters/in-memory-execution-store.js";
 import { payloadHashFor } from "./approval-service.js";
 import { decideAutomation } from "./automation-decision-service.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
@@ -18,7 +20,10 @@ import { FixtureResourceStore } from "./fixture-resource-store.js";
 import { ResourceGatewayService } from "./resource-gateway-service.js";
 import { ToolPolicyService } from "./tool-policy-service.js";
 import { Coordinator } from "./coordinator.js";
-import { idempotencyKeyFor } from "./email-executor.js";
+import type { ExecutionStore } from "./execution-ports.js";
+import { ExecutionService } from "./execution-service.js";
+import { RecoveryService } from "./recovery-service.js";
+import { RelayApprovalVerifier } from "./relay-approval-verifier.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
 import type { CreateRelaySessionInput, RelayApprovalView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
 import { RelayJsonStore } from "./relay-store.js";
@@ -29,6 +34,10 @@ export class RelayWorkflowService implements RelaySessionReader {
   private readonly adapter: CodexAgentAdapter;
   private readonly active = new Map<string, Promise<void>>();
   private readonly decisions = new Set<string>();
+  private readonly approvalVerifier: RelayApprovalVerifier;
+  private readonly recovery = new RecoveryService();
+  private readonly executionStore: ExecutionStore;
+  private readonly baseSecrets: readonly string[];
   private readonly grants = new AccessGrantService();
   readonly resourceGateway: ResourceGatewayService;
 
@@ -45,7 +54,12 @@ export class RelayWorkflowService implements RelaySessionReader {
     gatewayBaseUrl = "http://127.0.0.1:3000/api/middleware/resources",
     resourceHelperCommand = "agentrelay-resource",
     private readonly agentProvider?: () => Promise<AgentManifest[]>,
+    executionStore: ExecutionStore = new InMemoryExecutionStore(),
+    secrets: readonly string[] = [],
   ) {
+    this.approvalVerifier = new RelayApprovalVerifier(store);
+    this.executionStore = executionStore;
+    this.baseSecrets = secrets;
     this.resourceGateway = new ResourceGatewayService(this.grants, new ToolPolicyService(), new FixtureResourceStore(path.join(fixtureRoot, "protected")), this.store, async (sessionId) => (await this.requireSession(sessionId)).traceId, this.now);
     this.adapter = new CodexAgentAdapter(runner, this.agents.map((agent) => ({
       agentId: agent.agentId,
@@ -55,11 +69,26 @@ export class RelayWorkflowService implements RelaySessionReader {
 
   async initialize(): Promise<void> {
     await this.store.initialize();
-    const interrupted = (await this.store.listSessions()).filter((session) => session.status === "running");
+    const sessions = await this.store.listSessions();
+    const interrupted = sessions.filter((session) => session.status === "running");
     await Promise.all(interrupted.map(async (session) => {
-      const updated = { ...session, status: "failed" as const, updatedAt: this.now() };
-      await this.store.save(updated);
       await this.trace(session, "session.failed", { metadata: { reason: "Server restarted during workflow execution" } });
+      await this.store.save({ ...session, status: "failed" as const, updatedAt: this.now() });
+    }));
+    // A process that died mid-`decideApproval` leaves the session at
+    // awaiting_approval with an already-approved record. Reconcile from the
+    // receipt store so the session is never wedged: a receipt means the email
+    // was delivered (completed), its absence means it was not (failed).
+    const awaiting = sessions.filter((session) => session.status === "awaiting_approval");
+    await Promise.all(awaiting.map(async (session) => {
+      const action = (await this.store.listActions(session.id))[0];
+      if (!action) return;
+      const approval = await this.store.getApproval(`approval-${action.id}`);
+      if (approval?.status !== "approved") return;
+      const delivered = (await this.store.listReceipts(session.id)).length > 0;
+      const status = delivered ? "completed" as const : "failed" as const;
+      await this.trace(session, delivered ? "session.completed" : "session.failed", { metadata: { reason: "Reconciled after restart from the execution ledger" } });
+      await this.store.save({ ...session, status, updatedAt: this.now() });
     }));
   }
 
@@ -115,6 +144,9 @@ export class RelayWorkflowService implements RelaySessionReader {
       if (!approval) throw new HttpError(404, `Relay approval not found: ${approvalId}`);
       if (approval.status !== "pending") throw new HttpError(409, `Action approval is already ${approval.status}`);
       const session = await this.requireSession(approval.sessionId);
+      if (session.status === "completed" || session.status === "failed" || session.status === "cancelled") {
+        throw new HttpError(409, `Relay session is already ${session.status}`);
+      }
       const action = await this.store.getAction(approval.actionId);
       if (!action) throw new HttpError(409, "Approved action no longer exists");
       if (approval.payloadHash !== payloadHashFor(action)) {
@@ -125,25 +157,53 @@ export class RelayWorkflowService implements RelaySessionReader {
       }
       if (decision === "deny") {
         await this.store.saveApproval({ ...approval, status: "denied", deniedAt: this.now() });
-        await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
         await this.trace(session, "approval.denied", { taskId: action.taskId, agentId: action.producerAgentId });
+        await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
         return this.getSession(session.id);
       }
       await this.store.saveApproval({ ...approval, status: "approved", approvedAt: this.now() });
       await this.trace(session, "approval.granted", { taskId: action.taskId, agentId: action.producerAgentId });
-      const approved: ApprovedAction = { ...action, payloadHash: approval.payloadHash, idempotencyKey: idempotencyKeyFor(action.id, approval.payloadHash) };
-      await this.trace(session, "action.execution_started", { taskId: action.taskId, agentId: action.producerAgentId });
+      const payload = action.payload as Partial<SendEmailPayload>;
+      const approved: ApprovedAction = {
+        ...action,
+        payloadHash: approval.payloadHash,
+        idempotencyKey: `${session.id}|${action.id}|${approval.payloadHash}`,
+      };
+      const payloadSecrets = [payload.recipient, payload.subject].filter((value): value is string => typeof value === "string" && value.length > 0);
+      // ExecutionService owns approval enforcement, the atomic idempotency ledger,
+      // timeout/retry, and the redacted action.* / retry.* trace events (KTD10, KTD11).
+      const execution = new ExecutionService({
+        verifier: this.approvalVerifier,
+        store: this.executionStore,
+        executor: this.actionExecutor,
+        recovery: this.recovery,
+        sink: this.store,
+        traceId: session.traceId,
+        secrets: [...this.baseSecrets, ...payloadSecrets],
+        maxAttempts: 3,
+        timeoutMs: 10_000,
+      });
       try {
-        const result = await this.actionExecutor.execute(approved);
-        if (result.status !== "succeeded") throw new Error(result.error ?? "Protected action failed");
+        const outcome = await execution.run(approved, "REQUIRE_APPROVAL");
+        if (outcome.terminal) {
+          await this.trace(session, "session.failed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reason: outcome.reason ?? "Protected action failed" } });
+          await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
+          throw new HttpError(502, "Protected action failed; approval remains recorded");
+        }
+        if (outcome.result.status !== "succeeded") {
+          // Another in-flight execution holds the idempotency claim; the caller can retry.
+          throw new HttpError(409, "Protected action is already in progress");
+        }
         await this.store.save({ ...session, status: "completed", updatedAt: this.now() });
-        await this.trace(session, "action.executed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { externalReference: result.externalReference } });
+        return this.getSession(session.id);
       } catch (error) {
-        await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
-        await this.trace(session, "action.failed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reason: error instanceof Error ? error.message : String(error) } });
-        throw new HttpError(502, "Protected email delivery failed; approval remains recorded");
+        if (error instanceof HttpError) throw error;
+        // An unexpected failure after the approval was granted must still land a
+        // terminal session status, or the session wedges at awaiting_approval.
+        await this.trace(session, "session.failed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reason: error instanceof Error ? error.message : String(error) } });
+        await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
+        throw new HttpError(502, "Protected action execution failed unexpectedly");
       }
-      return this.getSession(session.id);
     } finally {
       this.decisions.delete(approvalId);
     }
@@ -159,8 +219,8 @@ export class RelayWorkflowService implements RelaySessionReader {
       await this.applyPolicy(sessionId, scenario);
     } catch (error) {
       const session = await this.requireSession(sessionId);
-      await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
       await this.trace(session, "session.failed", { metadata: { reason: error instanceof Error ? error.message : String(error) } });
+      await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
     }
   }
 
@@ -175,6 +235,8 @@ export class RelayWorkflowService implements RelaySessionReader {
       const agent = this.agents.find((candidate) => candidate.agentId === action.producerAgentId);
       const policy = decideAutomation(action, evidence, { agentId: action.producerAgentId, registered: agent !== undefined, permissions: agent?.permissions ?? [] });
       const metadata = { actionId: action.id, actionType: action.type, reasons: policy.reasons };
+      // Persist the approval record and trace events before the status a poller
+      // keys on; the session status is saved once after the loop.
       if (policy.decision === "REQUIRE_APPROVAL") {
         const approval = { id: `approval-${action.id}`, actionId: action.id, payloadHash: payloadHashFor(action), sessionId, status: "pending" as const, createdAt: this.now() };
         await this.store.saveApproval(approval);
