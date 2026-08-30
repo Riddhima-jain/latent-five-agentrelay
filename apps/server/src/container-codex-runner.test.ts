@@ -25,6 +25,7 @@ describe("Container Codex runner", () => {
         workspacePath: "/tmp/agent-workspace",
         prompt: "write a small program",
         threadId: null,
+        environment: { AGENTRELAY_ACCESS_GRANT: "opaque-grant-that-must-not-appear-in-argv" },
       },
       config,
     );
@@ -43,6 +44,9 @@ describe("Container Codex runner", () => {
     expect(args).toContain("io.codejam.instance-id=test-instance");
     expect(args).toContain("keep-id");
     expect(args).not.toContain("secret-that-must-not-appear-in-argv");
+    expect(args).toContain("/app/fixtures/sales-recovery/protected:rw,noexec,nosuid,nodev,size=64k");
+    expect(args).toContain("AGENTRELAY_ACCESS_GRANT");
+    expect(args).not.toContain("opaque-grant-that-must-not-appear-in-argv");
   });
 
   it("resumes a thread inside the mounted Runtime workspace", () => {

@@ -21,6 +21,7 @@ credentials, personal data, or exploit details in an issue.
 - Ark key stored in Terraform POC state
 - Relay JSON persistence is single-process and has no backup or multi-node coordination
 - Optional Resend delivery depends on an external provider and a verified sender
+- Resource scopes use a simple logical exact/prefix policy and are not production IAM
 
 ## Safe use
 

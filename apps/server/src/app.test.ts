@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import type { AgentService } from "./agent-service.js";
+import type { ResourceGatewayService } from "./application/resource-gateway-service.js";
 
 const service = {
   listAgents: () => [],
@@ -9,6 +10,17 @@ const service = {
 } as unknown as AgentService;
 
 describe("HTTP boundary", () => {
+  it("authorizes the resource route with only its opaque grant and never caller identity", async () => {
+    const gateway = { readResource: async (input: { grantId: string; resource: string }) => {
+      expect(input).toEqual({ grantId: "g".repeat(32), resource: "market/market-report.json" });
+      return { content: "protected", contentType: "text/plain", sourceRef: "resource://market/market-report.json" };
+    } } as unknown as ResourceGatewayService;
+    const app = await createApp(loadConfig({ NODE_ENV: "test", APP_AUTH_TOKEN: "a-strong-test-token" }), service, undefined, gateway);
+    const response = await app.inject({ method: "GET", url: "/api/middleware/resources/market/market-report.json", headers: { "x-agentrelay-grant": "g".repeat(32), "x-agent-id": "forged-finance-agent" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("protected");
+    await app.close();
+  });
   it("protects API routes with the configured shared token", async () => {
     const app = await createApp(
       loadConfig({ NODE_ENV: "test", APP_AUTH_TOKEN: "a-strong-test-token" }),

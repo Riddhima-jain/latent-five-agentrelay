@@ -1,6 +1,6 @@
 import type { AgentManifest } from "../domain/capability.js";
 import type { EvidenceRecord } from "../domain/evidence.js";
-import type { AgentExecutor, EvidenceStore, ExecutionContext, SessionStore, TaskStore, TraceSink } from "../domain/ports.js";
+import type { AccessGrantIssuer, AgentExecutor, EvidenceStore, ExecutionContext, SessionStore, TaskStore, TraceSink } from "../domain/ports.js";
 import type { SharedSession } from "../domain/session.js";
 import type { AgentTask, WorkflowTaskDefinition } from "../domain/task.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
@@ -18,6 +18,7 @@ export interface CoordinatorPorts {
   taskStore: TaskStore;
   evidenceStore: EvidenceStore;
   traceSink: TraceSink;
+  accessGrantIssuer?: AccessGrantIssuer;
 }
 
 export interface CoordinatorSnapshot {
@@ -96,9 +97,17 @@ export class Coordinator {
     if (running.status !== "running") return running;
 
     try {
-      const context = await this.buildContext(running);
+      const manifest = this.agents.find((candidate) => candidate.agentId === route.agentId)!;
+      const grant = this.ports.accessGrantIssuer ? await this.ports.accessGrantIssuer.issueGrant({ sessionId: running.sessionId, taskId: running.id, agent: manifest }) : null;
+      if (grant) await this.trace("grant.issued", { taskId: task.id, agentId: route.agentId, metadata: { allowedTools: grant.allowedTools, resourceScopes: grant.resourceScopes.map((scope) => scope.pattern), expiresAt: grant.expiresAt } });
+      const context = await this.buildContext(running, grant?.id);
       await this.trace("agent.invoked", { taskId: task.id, agentId: route.agentId });
-      const result = await this.ports.agentExecutor.execute(route.agentId, running, context);
+      let result: Awaited<ReturnType<AgentExecutor["execute"]>>;
+      try {
+        result = await this.ports.agentExecutor.execute(route.agentId, running, context);
+      } finally {
+        if (grant && this.ports.accessGrantIssuer?.revokeGrant) await this.ports.accessGrantIssuer.revokeGrant(grant.id);
+      }
       const completed = await this.persistTransition(running, "completed", "task.completed");
       await this.persistEvidence(completed, route.agentId, result.evidence);
       await Promise.all(result.proposedActions.map((action, index) => this.trace("action.proposed", {
@@ -119,13 +128,14 @@ export class Coordinator {
     }
   }
 
-  private async buildContext(task: AgentTask): Promise<ExecutionContext> {
+  private async buildContext(task: AgentTask, accessGrantId?: string): Promise<ExecutionContext> {
     if (!this.session) throw new Error("Coordinator has not been started.");
     const evidence = await this.ports.evidenceStore.listForTasks(task.dependsOn);
     return {
       sessionId: this.session.id, taskId: task.id, goal: this.session.goal, constraints: [],
       allowedResources: [...this.resourcesForTask(task)],
       dependencyEvidence: evidence.filter((record) => record.sessionId === this.session?.id && record.status === "accepted"),
+      ...(accessGrantId ? { accessGrantId } : {}),
     };
   }
 

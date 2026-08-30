@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ApprovedAction, ProposedAction } from "../domain/action.js";
+import type { AgentManifest } from "../domain/capability.js";
 import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-workflow.js";
 import type { ExternalActionExecutor } from "../domain/ports.js";
 import type { SharedSession } from "../domain/session.js";
@@ -12,7 +13,10 @@ import type { AgentRunner } from "../types.js";
 import { payloadHashFor } from "./approval-service.js";
 import { decideAutomation } from "./automation-decision-service.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
-import { LocalControlledFixtureProvider } from "./controlled-fixtures.js";
+import { AccessGrantService } from "./access-grant-service.js";
+import { FixtureResourceStore } from "./fixture-resource-store.js";
+import { ResourceGatewayService } from "./resource-gateway-service.js";
+import { ToolPolicyService } from "./tool-policy-service.js";
 import { Coordinator } from "./coordinator.js";
 import { idempotencyKeyFor } from "./email-executor.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
@@ -25,6 +29,8 @@ export class RelayWorkflowService implements RelaySessionReader {
   private readonly adapter: CodexAgentAdapter;
   private readonly active = new Map<string, Promise<void>>();
   private readonly decisions = new Set<string>();
+  private readonly grants = new AccessGrantService();
+  readonly resourceGateway: ResourceGatewayService;
 
   constructor(
     private readonly store: RelayJsonStore,
@@ -35,11 +41,16 @@ export class RelayWorkflowService implements RelaySessionReader {
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly createId: () => string = () => randomUUID(),
     private readonly runtimeAvailable: () => Promise<boolean> = () => Promise.resolve(true),
+    private agents: readonly AgentManifest[] = SALES_RECOVERY_AGENTS,
+    gatewayBaseUrl = "http://127.0.0.1:3000/api/middleware/resources",
+    resourceHelperCommand = "agentrelay-resource",
+    private readonly agentProvider?: () => Promise<AgentManifest[]>,
   ) {
-    this.adapter = new CodexAgentAdapter(runner, SALES_RECOVERY_AGENTS.map((agent) => ({
+    this.resourceGateway = new ResourceGatewayService(this.grants, new ToolPolicyService(), new FixtureResourceStore(path.join(fixtureRoot, "protected")), this.store, async (sessionId) => (await this.requireSession(sessionId)).traceId, this.now);
+    this.adapter = new CodexAgentAdapter(runner, this.agents.map((agent) => ({
       agentId: agent.agentId,
-      workspacePath: path.join(this.workspaceRootPath, ".agentrelay", agent.agentId),
-    })), new LocalControlledFixtureProvider(fixtureRoot));
+      workspacePath: path.join(this.workspaceRootPath, agent.agentId),
+    })), this.resourceGateway, gatewayBaseUrl, resourceHelperCommand);
   }
 
   async initialize(): Promise<void> {
@@ -55,20 +66,26 @@ export class RelayWorkflowService implements RelaySessionReader {
   async createSession(input: CreateRelaySessionInput = {}): Promise<RelaySessionView> {
     if (!await this.runtimeAvailable()) throw new HttpError(503, "Agent Runtime is not configured or unavailable");
     if (this.active.size > 0) throw new HttpError(409, "A Relay workflow is already running");
+    if (this.agentProvider) this.agents = await this.agentProvider();
+    for (const definition of SALES_RECOVERY_TASKS) {
+      const registered = this.agents.find((agent) => agent.capabilities.includes(definition.requiredCapability));
+      if (!registered) throw new HttpError(409, `AGENT_NOT_REGISTERED: ${definition.requiredCapability}`);
+      if (!registered.runnable) throw new HttpError(409, `AGENT_NOT_RUNNABLE: ${registered.agentId}`);
+    }
     const id = `STR-${this.createId().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
     if (await this.store.get(id)) throw new HttpError(409, "Generated Relay session identifier already exists");
     const timestamp = this.now();
     const session: SharedSession = {
       id, goal: input.goal?.trim() || defaultGoal, traceId: `trace-${id}`,
-      participantAgentIds: SALES_RECOVERY_AGENTS.map((agent) => agent.agentId),
+      participantAgentIds: this.agents.map((agent) => agent.agentId),
       status: "created", createdAt: timestamp, updatedAt: timestamp,
     };
-    await Promise.all(SALES_RECOVERY_AGENTS.map((agent) => mkdir(path.join(this.workspaceRootPath, ".agentrelay", agent.agentId), { recursive: true })));
+    await Promise.all(this.agents.map((agent) => mkdir(path.join(this.workspaceRootPath, agent.agentId), { recursive: true })));
     const scenario = input.scenario ?? "normal";
     const executor = new RecordingAgentExecutor(this.adapter, this.store, scenario, this.now);
     const coordinator = new Coordinator(
-      SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS,
-      { agentExecutor: executor, sessionStore: this.store, taskStore: this.store.taskStore, evidenceStore: this.store.evidenceStore, traceSink: this.store },
+      SALES_RECOVERY_TASKS, this.agents,
+      { agentExecutor: executor, sessionStore: this.store, taskStore: this.store.taskStore, evidenceStore: this.store.evidenceStore, traceSink: this.store, accessGrantIssuer: this.grants },
       this.now, undefined, resourcesForTask,
     );
     const started = await coordinator.start(session);
@@ -153,22 +170,28 @@ export class RelayWorkflowService implements RelaySessionReader {
     const actions = await this.store.listActions(sessionId);
     if (actions.length === 0) return;
     const evidence = await this.store.listEvidence(sessionId);
-    const action = actions[0]!;
-    const agent = SALES_RECOVERY_AGENTS.find((candidate) => candidate.agentId === action.producerAgentId);
-    const policy = decideAutomation(action, evidence, { agentId: action.producerAgentId, registered: agent !== undefined, permissions: agent?.permissions ?? [] });
-    if (policy.decision === "REQUIRE_APPROVAL") {
-      const approval = { id: `approval-${action.id}`, actionId: action.id, payloadHash: payloadHashFor(action), sessionId, status: "pending" as const, createdAt: this.now() };
-      await this.store.saveApproval(approval);
-      await this.store.save({ ...session, status: "awaiting_approval", updatedAt: this.now() });
-      await this.trace(session, "policy.approval_required", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reasons: policy.reasons } });
-      await this.trace(session, "approval.requested", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { approvalId: approval.id } });
-    } else if (policy.decision === "DENY") {
-      await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
-      await this.trace(session, "policy.denied", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reasons: policy.reasons } });
-    } else {
-      await this.store.save({ ...session, status: "recommend_only", updatedAt: this.now() });
-      await this.trace(session, "policy.recommend_only", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reasons: policy.reasons } });
+    let finalStatus: SharedSession["status"] = "completed";
+    for (const action of actions) {
+      const agent = this.agents.find((candidate) => candidate.agentId === action.producerAgentId);
+      const policy = decideAutomation(action, evidence, { agentId: action.producerAgentId, registered: agent !== undefined, permissions: agent?.permissions ?? [] });
+      const metadata = { actionId: action.id, actionType: action.type, reasons: policy.reasons };
+      if (policy.decision === "REQUIRE_APPROVAL") {
+        const approval = { id: `approval-${action.id}`, actionId: action.id, payloadHash: payloadHashFor(action), sessionId, status: "pending" as const, createdAt: this.now() };
+        await this.store.saveApproval(approval);
+        finalStatus = "awaiting_approval";
+        await this.trace(session, "policy.approval_required", { taskId: action.taskId, agentId: action.producerAgentId, metadata });
+        await this.trace(session, "approval.requested", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { approvalId: approval.id } });
+      } else if (policy.decision === "DENY") {
+        if (finalStatus !== "awaiting_approval") finalStatus = "degraded";
+        await this.trace(session, "policy.denied", { taskId: action.taskId, agentId: action.producerAgentId, metadata });
+      } else if (policy.decision === "RECOMMEND_ONLY") {
+        if (finalStatus === "completed") finalStatus = "recommend_only";
+        await this.trace(session, "policy.recommend_only", { taskId: action.taskId, agentId: action.producerAgentId, metadata });
+      } else {
+        await this.trace(session, "policy.auto_execute", { taskId: action.taskId, agentId: action.producerAgentId, metadata });
+      }
     }
+    await this.store.save({ ...session, status: finalStatus, updatedAt: this.now() });
   }
 
   private async project(session: SharedSession): Promise<RelaySessionView> {
@@ -176,8 +199,10 @@ export class RelayWorkflowService implements RelaySessionReader {
       this.store.listBySession(session.id), this.store.listEvidence(session.id), this.store.listTrace(session.id),
       this.store.listActions(session.id), this.store.listTaskResults(session.id), this.store.listReceipts(session.id),
     ]);
-    const action = actions[0] ?? null;
-    const approvalRecord = action ? await this.store.getApproval(`approval-${action.id}`) : null;
+    const approvalPairs = await Promise.all(actions.map(async (candidate) => ({ action: candidate, approval: await this.store.getApproval(`approval-${candidate.id}`) })));
+    const approvedPair = approvalPairs.find((pair) => pair.approval) ?? null;
+    const action = approvedPair?.action ?? actions[0] ?? null;
+    const approvalRecord = approvedPair?.approval ?? null;
     const approval: RelayApprovalView | null = action && approvalRecord && action.type === "SEND_EMAIL" ? {
       id: approvalRecord.id, actionId: action.id, actionHash: approvalRecord.payloadHash, status: approvalRecord.status,
       decision: "REQUIRE_APPROVAL", actionType: "SEND_EMAIL",
@@ -190,7 +215,7 @@ export class RelayWorkflowService implements RelaySessionReader {
       id: session.id, traceId: session.traceId, title: "Workflow Overview", goal: session.goal,
       status: session.status === "completed" && action && !approvalRecord ? "running" : projectSessionStatus(session.status), startedAt: session.createdAt,
       tasks: tasks.map((task) => {
-        const agent = SALES_RECOVERY_AGENTS.find((candidate) => candidate.agentId === task.assignedAgentId);
+        const agent = this.agents.find((candidate) => candidate.agentId === task.assignedAgentId);
         const result = results.find((candidate) => candidate.taskId === task.id);
         const started = traces.find((event) => event.taskId === task.id && event.type === "task.started");
         const completed = traces.find((event) => event.taskId === task.id && event.type === "task.completed");
@@ -202,6 +227,9 @@ export class RelayWorkflowService implements RelaySessionReader {
       trace: traces.map(projectTrace),
       evidence: evidence.map((record) => ({ id: record.id, taskId: record.taskId, claim: record.claim, sourceRefs: [...record.sourceRefs], status: record.status, createdAt: record.createdAt })),
       receipts: receipts.map((receipt) => ({ actionId: receipt.actionId, provider: receipt.provider, externalReference: receipt.externalReference, acceptedAt: receipt.acceptedAt })),
+      agentManifests: this.agents.map((agent) => ({ agentId: agent.agentId, name: agent.name, capabilities: [...agent.capabilities], runnable: agent.runnable, allowedTools: [...(agent.toolPolicy?.allowedTools ?? [])], resourceScopes: (agent.toolPolicy?.resourceScopes ?? []).map((scope) => scope.pattern) })),
+      resourceAccessEvents: traces.filter((event) => event.type === "tool.access.allowed" || event.type === "tool.access.denied").map((event) => ({ id: event.id, timestamp: event.timestamp, agentId: event.agentId ?? "unknown", agentName: this.agents.find((agent) => agent.agentId === event.agentId)?.name ?? "Unknown Agent", taskId: event.taskId ?? "unknown", tool: "resource.read" as const, resource: String(event.metadata?.resource ?? "unknown"), operation: "read" as const, decision: event.type === "tool.access.allowed" ? "ALLOW" as const : "DENY" as const, reason: String(event.metadata?.reason ?? "INVALID_GRANT") })),
+      recommendations: traces.filter((event) => event.type === "policy.recommend_only").flatMap((event) => { const recommendationAction = actions.find((candidate) => candidate.id === event.metadata?.actionId); return recommendationAction ? [{ id: `recommendation-${recommendationAction.id}`, taskId: recommendationAction.taskId, actionType: recommendationAction.type, summary: recommendationAction.rationale ?? `Review proposed ${recommendationAction.type}`, decision: "RECOMMEND_ONLY" as const, reasons: Array.isArray(event.metadata?.reasons) ? event.metadata.reasons.map(String) : [], supportingEvidenceIds: evidence.filter((record) => record.status === "accepted").map((record) => record.id) }] : []; }),
     };
   }
 
@@ -219,9 +247,9 @@ export class RelayWorkflowService implements RelaySessionReader {
 }
 
 function resourcesForTask(task: AgentTask): readonly string[] {
-  if (task.id === "research") return ["fixture://market-report.json"];
-  if (task.id === "finance") return ["fixture://finance-report.csv"];
-  if (task.id === "outreach") return ["fixture://customer-list.json"];
+  if (task.id === "research") return ["market/market-report.json"];
+  if (task.id === "finance") return ["finance/finance-report.csv"];
+  if (task.id === "outreach") return ["customer/customer-list.json"];
   return [];
 }
 

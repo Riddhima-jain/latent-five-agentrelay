@@ -38,6 +38,9 @@ export function decideAutomation(
   if (risk.prohibited) {
     return { decision: "DENY", risk, reasons: ["Action is prohibited by the server-side registry"] };
   }
+  if (risk.impact === "high" || risk.impact === "critical") {
+    return { decision: "RECOMMEND_ONLY", risk, reasons: ["High-impact actions cannot execute automatically"] };
+  }
   if (!agent.permissions.includes(risk.requiredPermission)) {
     return { decision: "DENY", risk, reasons: ["Agent lacks the required permission"] };
   }
@@ -46,9 +49,6 @@ export function decideAutomation(
   }
   if (evidence.some((record) => record.status === "rejected")) {
     return { decision: "RECOMMEND_ONLY", risk, reasons: ["Rejected or conflicting evidence prevents automation"] };
-  }
-  if (risk.impact === "high" || risk.impact === "critical") {
-    return { decision: "RECOMMEND_ONLY", risk, reasons: ["High-impact actions cannot execute automatically"] };
   }
   if (risk.targetScope === "external" || risk.targetScope === "protected") {
     return { decision: "REQUIRE_APPROVAL", risk, reasons: ["External or protected action requires human approval"] };

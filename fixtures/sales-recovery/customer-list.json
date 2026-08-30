@@ -1,7 +1,0 @@
-{
-  "customers": [
-    { "id": "customer-a", "segment": "at-risk", "contact": "demo-contact-a" },
-    { "id": "customer-b", "segment": "at-risk", "contact": "demo-contact-b" }
-  ],
-  "source": "controlled-demo-customer-list"
-}
