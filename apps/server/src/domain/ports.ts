@@ -3,6 +3,7 @@ import type { EvidenceRecord } from "./evidence.js";
 import type { SharedSession } from "./session.js";
 import type { AgentExecutionResult, AgentTask } from "./task.js";
 import type { TraceEvent } from "./trace.js";
+import type { AccessGrant } from "./tool-access.js";
 
 export interface ExecutionContext {
   sessionId: string;
@@ -16,6 +17,8 @@ export interface ExecutionContext {
     gatewayBaseUrl: string;
     allowedResourceHandles: string[];
   };
+  /** Opaque server-issued grant for runtime configuration; never prompt content. */
+  accessGrant?: AccessGrant;
 }
 
 export interface AgentExecutor {

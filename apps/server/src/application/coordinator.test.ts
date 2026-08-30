@@ -5,6 +5,8 @@ import type { EvidenceRecord } from "../domain/evidence.js";
 import type { CoordinatorPorts } from "./coordinator.js";
 import { Coordinator } from "./coordinator.js";
 import { PersistedAgentManifestRegistry } from "./agent-manifest-registry.js";
+import type { AccessGrantService } from "./access-grant-service.js";
+import type { AccessGrant } from "../domain/tool-access.js";
 
 const fixedClock = () => "2026-08-29T00:00:00.000Z";
 const session = () => ({
@@ -172,6 +174,35 @@ describe("Coordinator", () => {
       realIds["finance-agent"],
       realIds["research-agent"],
     ]);
+  });
+
+  it("issues a grant for the exact real Agent ID selected for execution", async () => {
+    const realResearchId = "agt-real-research";
+    const manifests = SALES_RECOVERY_AGENTS.map((agent) => ({ ...agent, agentId: agent.agentId === "research-agent" ? realResearchId : `agt-${agent.agentId}`, toolPolicy: { ...agent.toolPolicy, agentId: agent.agentId === "research-agent" ? realResearchId : `agt-${agent.agentId}` } }));
+    const persisted = new PersistedAgentManifestRegistry(manifests, { async get(agentId) { return { id: agentId, status: "ready" as const }; } });
+    const issued: Array<{ agentId: string; taskId: string }> = [];
+    const grants: AccessGrantService = {
+      async issueGrant(input) {
+        issued.push({ agentId: input.agent.agentId, taskId: input.taskId });
+        return { id: `grant-${input.taskId}`, sessionId: input.sessionId, taskId: input.taskId, agentId: input.agent.agentId, allowedTools: [...input.agent.toolPolicy.allowedTools], resourceScopes: [], status: "active", createdAt: fixedClock() };
+      },
+      async getGrant() { return null; },
+      async revokeGrant() {},
+    };
+    const calls: Array<{ agentId: string; grant: AccessGrant | undefined }> = [];
+    const harness = makePorts({
+      accessGrantService: grants,
+      agentExecutor: { async execute(agentId, _task, context) {
+        calls.push({ agentId, grant: context.accessGrant });
+        return { summary: "ok", evidence: [], proposedActions: [] };
+      } },
+    });
+    const coordinator = new Coordinator(SALES_RECOVERY_TASKS, manifests, harness.ports, fixedClock, new Set(manifests.flatMap((agent) => agent.capabilities)), undefined, persisted);
+    await coordinator.start({ ...session(), participantAgentIds: manifests.map((agent) => agent.agentId) });
+    await coordinator.tick();
+
+    expect(issued).toEqual(expect.arrayContaining([{ agentId: realResearchId, taskId: "research" }]));
+    expect(calls).toEqual(expect.arrayContaining([{ agentId: realResearchId, grant: expect.objectContaining({ agentId: realResearchId, taskId: "research" }) }]));
   });
 
   it("fails the session only after a task exhausts its retry attempts", async () => {
