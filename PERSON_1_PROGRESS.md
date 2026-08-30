@@ -10,3 +10,5 @@
 - Completed locally: P2 runtime resource helper and opaque per-run adapter configuration. Pending validation/commit.
 - Constraint: real Agent IDs/bootstrap are supplied by Person 5; implementation must keep missing IDs explicit rather than creating substitutes.
 - Fixed: fixture root is resolved from the server entry module, so workspace-launched server commands use the repository `fixtures/sales-recovery` directory rather than `apps/server/fixtures`; server typecheck and 108-test suite pass. Pending commit.
+- Completed on `madhu/demo-setup`: P3 resource-abuse demo scenario reuses Research's active run grant for a real cross-scope Finance read; the Resource Gateway records `RESOURCE_OUT_OF_SCOPE`, contains the expected denial, and allows the normal workflow to continue. API contract and focused workflow/API tests pass.
+- Handoff: `docs/PERSON_5_ABUSE_DEMO_HANDOFF.md` lists the frontend additions and the P4/P5-owned protected-action Runtime/HTTP probe still required; no P4/P5 implementation was taken over.

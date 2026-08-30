@@ -111,7 +111,13 @@ export class RelayWorkflowService implements RelaySessionReader {
     };
     await Promise.all(this.agents.map((agent) => mkdir(path.join(this.workspaceRootPath, agent.agentId), { recursive: true })));
     const scenario = input.scenario ?? "normal";
-    const executor = new RecordingAgentExecutor(this.adapter, this.store, scenario, this.now);
+    const executor = new RecordingAgentExecutor(
+      this.adapter,
+      this.store,
+      scenario,
+      this.resourceGateway,
+      this.now,
+    );
     const coordinator = new Coordinator(
       SALES_RECOVERY_TASKS, this.agents,
       { agentExecutor: executor, sessionStore: this.store, taskStore: this.store.taskStore, evidenceStore: this.store.evidenceStore, traceSink: this.store, accessGrantIssuer: this.grants },

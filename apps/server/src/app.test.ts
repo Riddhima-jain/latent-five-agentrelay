@@ -125,6 +125,13 @@ describe("HTTP boundary", () => {
     expect(listed.statusCode).toBe(200);
     expect(listed.json().sessions.length).toBeGreaterThan(0);
 
+    const resourceAbuse = await app.inject({
+      method: "POST",
+      url: "/api/relay/sessions",
+      payload: { scenario: "resource_abuse" },
+    });
+    expect(resourceAbuse.statusCode).toBe(201);
+
     const invalid = await app.inject({ method: "POST", url: "/api/relay/sessions", payload: { scenario: "fake-success" } });
     expect(invalid.statusCode).toBe(400);
     const emptyGoal = await app.inject({ method: "POST", url: "/api/relay/sessions", payload: { goal: "   " } });

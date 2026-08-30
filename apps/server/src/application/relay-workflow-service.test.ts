@@ -174,4 +174,33 @@ describe("RelayWorkflowService", () => {
     expect(denied.approval).toBeNull();
     expect(denied.trace.map((event) => event.type)).toContain("policy.denied");
   });
+
+  it("contains a Research-to-Finance resource abuse attempt and continues the workflow", async () => {
+    const { service } = await createHarness();
+    const created = await service.createSession({ scenario: "resource_abuse" });
+    const pending = await waitFor(service, created.id, ["awaiting_approval"]);
+
+    expect(pending.resourceAccessEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        taskId: "research",
+        resource: "market/market-report.json",
+        decision: "ALLOW",
+        reason: "GRANT_PERMITS_REQUEST",
+      }),
+      expect.objectContaining({
+        taskId: "research",
+        resource: "finance/finance-report.csv",
+        decision: "DENY",
+        reason: "RESOURCE_OUT_OF_SCOPE",
+      }),
+      expect.objectContaining({
+        taskId: "finance",
+        resource: "finance/finance-report.csv",
+        decision: "ALLOW",
+        reason: "GRANT_PERMITS_REQUEST",
+      }),
+    ]));
+    expect(pending.tasks.find((task) => task.id === "research")?.status).toBe("completed");
+    expect(pending.approval?.status).toBe("pending");
+  });
 });
