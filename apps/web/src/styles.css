@@ -101,7 +101,7 @@ body { background: var(--canvas); }
 .button-outline { color: #48515e; border: 1px solid var(--line); background: #fff; white-space: nowrap; }
 
 .workflow-card-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 22px; }
-.workflow-card { position: relative; min-height: 250px; padding: 21px 18px 17px; border: 1px solid #aab3b9; border-radius: 10px; background: var(--paper); }
+.workflow-card { display: flex; min-height: 250px; padding: 21px 18px 17px; flex-direction: column; border: 1px solid #aab3b9; border-radius: 10px; background: var(--paper); }
 .workflow-card-completed { border-color: #659b83; }
 .workflow-card-running { border-color: #76619a; }
 .workflow-card-heading { display: flex; align-items: center; gap: 15px; }
@@ -113,8 +113,8 @@ body { background: var(--canvas); }
 .workflow-state-completed { color: var(--green); }
 .workflow-state-running { color: var(--purple); }
 .workflow-state-waiting { color: #66717d; }
-.workflow-card > p { min-height: 58px; margin: 22px 0; color: #596473; font-size: 12px; line-height: 1.55; }
-.workflow-card-meta { position: absolute; right: 18px; bottom: 17px; left: 18px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 12px; margin: 0; padding-top: 17px; border-top: 1px solid #e1e4e5; }
+.workflow-card > p { margin: 22px 0 0; color: #596473; font-size: 12px; line-height: 1.55; }
+.workflow-card-meta { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 12px; margin: auto 0 0; padding-top: 22px; border-top: 1px solid #e1e4e5; }
 .mini-progress { display: block; width: 62px; height: 6px; margin-top: 7px; overflow: hidden; border-radius: 8px; background: #dadddf; }
 .mini-progress i { display: block; width: 62%; height: 100%; border-radius: inherit; background: var(--purple); }
 
@@ -543,7 +543,7 @@ button {
 .relay-live-dot::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: #3fa17c; }
 
 .relay-workflow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
-.relay-task { position: relative; min-height: 220px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #f7f6f1; }
+.relay-task { position: relative; display: flex; min-height: 220px; padding: 15px; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; background: #f7f6f1; }
 .relay-task:not(:last-child)::after { content: "›"; position: absolute; z-index: 2; top: 44px; right: -8px; color: #a7a69f; background: var(--paper); }
 .relay-task-approval_required { border-color: #dec46f; background: #fffaf0; box-shadow: inset 0 3px #d7a936; }
 .relay-task-completed { box-shadow: inset 0 3px #58a487; }
@@ -557,7 +557,7 @@ button {
 .relay-task h3 { margin: 17px 0 3px; font-size: 14px; }
 .relay-task .relay-agent-name { margin: 0 0 12px; color: var(--purple); font-size: 10px; font-weight: 750; }
 .relay-task > p:not(.relay-agent-name) { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.relay-task footer { position: absolute; bottom: 14px; left: 15px; right: 15px; display: flex; justify-content: space-between; color: #81817a; font-size: 9px; text-transform: uppercase; }
+.relay-task footer { display: flex; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 22px; color: #81817a; font-size: 9px; text-transform: uppercase; }
 
 .relay-policy-note { display: flex; gap: 11px; padding: 12px; border-radius: 10px; color: #755b18; background: #fff7dd; }
 .relay-policy-note > span { width: 23px; height: 23px; flex: none; display: grid; place-items: center; border-radius: 50%; color: white; background: #d0a634; font-weight: 800; }
