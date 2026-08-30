@@ -5,6 +5,7 @@ import type { SharedSession } from "../domain/session.js";
 import type { AgentTask, WorkflowTaskDefinition } from "../domain/task.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
 import { routeTaskByCapability } from "./capability-router.js";
+import type { AgentManifestRegistry } from "./agent-manifest-registry.js";
 import { applyEvidenceAcceptance } from "./evidence-acceptance.js";
 import type { DagValidationError } from "./dag-validator.js";
 import { validateTaskDag } from "./dag-validator.js";
@@ -44,6 +45,7 @@ export class Coordinator {
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly knownCapabilities: ReadonlySet<string> = new Set(agents.flatMap((agent) => agent.capabilities)),
     private readonly resourcesForTask: (task: AgentTask) => readonly string[] = () => [],
+    private readonly manifestRegistry?: AgentManifestRegistry,
   ) {}
 
   async start(session: SharedSession): Promise<CoordinatorStartResult> {
@@ -84,10 +86,20 @@ export class Coordinator {
   }
 
   private async executeTask(task: AgentTask): Promise<AgentTask> {
-    const route = routeTaskByCapability(task, this.agents);
+    const routingAgents = this.manifestRegistry
+      ? await this.manifestRegistry.findEligible({
+        capability: task.requiredCapability,
+        requiredPermissions: task.requiredPermissions,
+      })
+      : this.agents;
+    const route = routeTaskByCapability(task, routingAgents);
     if (route.status === "UNASSIGNED") {
       return this.persistTransition(task, "unassigned", "task.failed", { reason: route.reason });
     }
+
+    // Re-read the selected manifest immediately before invocation. This keeps the
+    // persisted Starter Kit identity authoritative if its runtime state changes.
+    if (this.manifestRegistry) await this.manifestRegistry.get(route.agentId);
 
     const assignedTask = { ...task, assignedAgentId: route.agentId, updatedAt: this.now() };
     await this.ports.taskStore.save(assignedTask);

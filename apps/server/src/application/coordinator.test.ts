@@ -4,6 +4,7 @@ import type { AgentManifest } from "../domain/capability.js";
 import type { EvidenceRecord } from "../domain/evidence.js";
 import type { CoordinatorPorts } from "./coordinator.js";
 import { Coordinator } from "./coordinator.js";
+import { PersistedAgentManifestRegistry } from "./agent-manifest-registry.js";
 
 const fixedClock = () => "2026-08-29T00:00:00.000Z";
 const session = () => ({
@@ -141,6 +142,36 @@ describe("Coordinator", () => {
     expect(statusOf(snapshot, "strategy")).toBe("blocked");
     expect(snapshot.blockedByFailedDependencyTaskIds).toEqual(["strategy"]);
     expect(harness.getSession().status).toBe("failed");
+  });
+
+  it("routes through registered persisted Agent IDs before invoking the executor", async () => {
+    const realIds = {
+      "research-agent": "agt-real-research",
+      "finance-agent": "agt-real-finance",
+      "strategy-agent": "agt-real-strategy",
+      "outreach-agent": "agt-real-outreach",
+    } as const;
+    const manifests = SALES_RECOVERY_AGENTS.map((agent) => ({ ...agent, agentId: realIds[agent.agentId as keyof typeof realIds]! }));
+    const persisted = new PersistedAgentManifestRegistry(manifests, {
+      async get(agentId) { return { id: agentId, status: "ready" as const }; },
+    });
+    const harness = makePorts();
+    const coordinator = new Coordinator(
+      SALES_RECOVERY_TASKS,
+      manifests,
+      harness.ports,
+      fixedClock,
+      new Set(manifests.flatMap((agent) => agent.capabilities)),
+      undefined,
+      persisted,
+    );
+    await coordinator.start({ ...session(), participantAgentIds: manifests.map((agent) => agent.agentId) });
+    await coordinator.tick();
+
+    expect(harness.calls.map((call) => call.agentId).sort()).toEqual([
+      realIds["finance-agent"],
+      realIds["research-agent"],
+    ]);
   });
 
   it("fails the session only after a task exhausts its retry attempts", async () => {
