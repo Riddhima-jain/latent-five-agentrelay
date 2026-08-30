@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { RelayAgentManifestView, RelayRecommendationView, RelayResourceAccessEvent, RelaySession, RelayTask } from "./types";
 
@@ -55,6 +55,33 @@ function WorkflowCard({ task }: { task: RelayTask }) {
   );
 }
 
+function FleetMap({ tasks }: { tasks: RelayTask[] }) {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const roots = tasks.filter((task) => task.dependsOn.length === 0);
+  const stages = tasks.filter((task) => task.dependsOn.length > 0);
+  const statusLabel = (task: RelayTask) => task.status === "waiting" ? "Idle" : task.status.replaceAll("_", " ");
+  const renderAgent = (task: RelayTask) => (
+    <article className={`fleet-agent fleet-agent-${task.status}`} key={task.id}>
+      <span className="fleet-agent-status" aria-hidden="true" />
+      <div><strong>{task.agentName}</strong><small>{statusLabel(task)}</small></div>
+      <p>{task.summary}</p>
+      <span className="fleet-dependency">{task.dependsOn.length ? `After ${task.dependsOn.map((id) => taskById.get(id)?.title ?? id).join(" + ")}` : "Starts in parallel"}</span>
+    </article>
+  );
+
+  return (
+    <section className="fleet-map" aria-labelledby="fleet-map-title">
+      <header><div><span className="resource-panel-eyebrow">Live execution topology</span><h2 id="fleet-map-title">Agent Fleet Map</h2><p>Dependencies show how work and evidence move through the fleet.</p></div><span className="fleet-live-count">{tasks.filter((task) => task.status === "running").length} active</span></header>
+      <div className="fleet-flow">
+        <article className="fleet-coordinator"><span>AR</span><div><strong>Workflow Coordinator</strong><small>Routes work, evidence and approvals</small></div></article>
+        <div className="fleet-connector fleet-connector-down" aria-hidden="true" />
+        <div className="fleet-parallel" aria-label="Parallel starting agents">{roots.map(renderAgent)}</div>
+        {stages.map((task) => <div className="fleet-stage" key={task.id}><div className="fleet-connector fleet-connector-down" aria-hidden="true" />{renderAgent(task)}</div>)}
+      </div>
+    </section>
+  );
+}
+
 function PermissionSummary({ manifest }: { manifest: RelayAgentManifestView }) {
   return <article className="permission-summary"><header><span className={`permission-agent-state ${manifest.runnable ? "permission-agent-ready" : "permission-agent-unavailable"}`} /><div><strong>{manifest.name}</strong><small>Starter Kit Agent · {manifest.agentId}</small></div></header><dl><div><dt>Capabilities</dt><dd>{manifest.capabilities.join(", ") || "None registered"}</dd></div><div><dt>Allowed tools</dt><dd>{manifest.allowedTools.join(", ") || "No protected tools"}</dd></div><div><dt>Resource scopes</dt><dd>{manifest.resourceScopes.join(", ") || "No raw resource access"}</dd></div></dl></article>;
 }
@@ -76,6 +103,8 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
   const [scenario, setScenario] = useState<"normal" | "timeout" | "denial">("normal");
   const [goal, setGoal] = useState("");
   const [showComposer, setShowComposer] = useState(true);
+  const [dismissedApprovalId, setDismissedApprovalId] = useState<string | null>(null);
+  const decisionPanelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     void api.listRelaySessions().then((history) => {
@@ -131,6 +160,13 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); }
   };
 
+  const focusDecision = () => {
+    decisionPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    decisionPanelRef.current?.focus({ preventScroll: true });
+  };
+
+  const pendingApproval = session.approval?.status === "pending" ? session.approval : null;
+
   return (
     <div className="relay-page relay-reference-page">
       {showComposer ? <>
@@ -155,6 +191,8 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
       <p className="workflow-active-goal">{session.goal}</p>
       {!runtimeReady && <div className="config-banner"><span>!</span><div><strong>Agent Runtime configuration required</strong><p>Configure Ark or Gemini and ensure Codex is available before starting a real workflow.</p></div></div>}
       {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
+      {pendingApproval && dismissedApprovalId !== pendingApproval.id && <aside className="approval-notification" role="status" aria-live="polite"><button className="approval-notification-close" aria-label="Dismiss approval notification" onClick={() => setDismissedApprovalId(pendingApproval.id)}>×</button><span className="approval-notification-icon">!</span><div><strong>Strategy is ready</strong><p>Outreach requires your approval before it can continue.</p><button onClick={focusDecision}>Review decision →</button></div></aside>}
+      <FleetMap tasks={session.tasks} />
       <section className="workflow-card-grid">{session.tasks.map((task) => <WorkflowCard key={task.id} task={task} />)}</section>
       <section className="resource-governance-panel" aria-labelledby="resource-access-title">
         <header><div><span className="resource-panel-eyebrow">Deterministic control plane</span><h2 id="resource-access-title">Tool &amp; Resource Access</h2><p>Run-scoped permissions govern which protected resources each Agent may read.</p></div><span className="resource-event-count">{session.resourceAccessEvents?.length ?? 0} access events</span></header>
@@ -168,7 +206,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
           <div className="evidence-list">{session.evidence?.length ? session.evidence.map((record) => <div className="evidence-row" key={record.id}><span className="evidence-icon">▤</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ")}</small></div><div><b>{record.status}</b><small>{record.taskId}</small></div></div>) : evidence.map(([title, source, kind, icon]) => <div className="evidence-row" key={title}><span className="evidence-icon">{icon === "web" ? "◎" : icon === "sheet" ? "▦" : "▤"}</span><div><strong>{title}</strong><small>{source}</small></div><div><b>Preview</b><small>{kind}</small></div></div>)}</div>
           <button className="panel-link">View all evidence →</button>
         </article>
-        <article className="reference-panel decision-panel">
+        <article className="reference-panel decision-panel" ref={decisionPanelRef} tabIndex={-1}>
           <header><h2>Automation Decision</h2><span className="soft-badge">Policy: Standard</span></header>
           {session.approval ? <><div className="decision-title"><span>!</span><strong>{session.approval.decision.replaceAll("_", " ")}</strong></div><p>{session.approval.rationale}</p><h3>Action Summary</h3><dl className="action-summary"><div><dt>Action</dt><dd>{session.approval.actionType}</dd></div><div><dt>Agent</dt><dd>Outreach Agent</dd></div><div><dt>Affected system</dt><dd>Email executor</dd></div><div><dt>Recipients</dt><dd>{session.approval.recipient}</dd></div><div><dt>Payload hash</dt><dd><code>{session.approval.actionHash.slice(0, 12)}…</code></dd></div></dl><div className="approval-request"><div className="requester"><span>SA</span><p><strong>Strategy Agent</strong><small>{session.approval.status}</small></p></div><div className="approval-buttons"><button className="approve-button" disabled={busy || session.approval.status !== "pending"} onClick={() => decide("approve")}>✓ Approve</button><button className="deny-button" disabled={busy || session.approval.status !== "pending"} onClick={() => decide("deny")}>× Deny</button></div></div>{session.receipts?.map((receipt) => <div className="execution-receipt" key={receipt.externalReference}><strong>✓ Executed via {receipt.provider}</strong><code>{receipt.externalReference}</code><small>{new Date(receipt.acceptedAt).toLocaleString()}</small></div>)}</> : <div className={`decision-empty decision-empty-${session.status}`}><strong>{session.status === "degraded" ? "Action denied by policy" : session.status === "failed" ? "Workflow failed" : "No decision pending"}</strong><p>Policy events and failure reasons are recorded in the trace.</p></div>}
         </article>

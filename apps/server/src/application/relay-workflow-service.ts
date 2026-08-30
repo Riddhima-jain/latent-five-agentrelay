@@ -25,7 +25,7 @@ import { ExecutionService } from "./execution-service.js";
 import { RecoveryService } from "./recovery-service.js";
 import { RelayApprovalVerifier } from "./relay-approval-verifier.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
-import type { CreateRelaySessionInput, RelayApprovalView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
+import type { CreateRelaySessionInput, RelayAgentManifestView, RelayApprovalView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
 import { RelayJsonStore } from "./relay-store.js";
 
 const defaultGoal = "Analyze the controlled sales-recovery evidence, recommend a strategy, and draft safe customer outreach.";
@@ -128,6 +128,11 @@ export class RelayWorkflowService implements RelaySessionReader {
     const sessions = await this.store.listSessions();
     const views = await Promise.all(sessions.map((session) => this.project(session)));
     return views.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
+  async listAgentManifests(): Promise<RelayAgentManifestView[]> {
+    if (this.agentProvider) this.agents = await this.agentProvider();
+    return this.agents.map(projectAgentManifest);
   }
 
   async getSession(id: string): Promise<RelaySessionView> {
@@ -289,7 +294,7 @@ export class RelayWorkflowService implements RelaySessionReader {
       trace: traces.map(projectTrace),
       evidence: evidence.map((record) => ({ id: record.id, taskId: record.taskId, claim: record.claim, sourceRefs: [...record.sourceRefs], status: record.status, createdAt: record.createdAt })),
       receipts: receipts.map((receipt) => ({ actionId: receipt.actionId, provider: receipt.provider, externalReference: receipt.externalReference, acceptedAt: receipt.acceptedAt })),
-      agentManifests: this.agents.map((agent) => ({ agentId: agent.agentId, name: agent.name, capabilities: [...agent.capabilities], runnable: agent.runnable, allowedTools: [...(agent.toolPolicy?.allowedTools ?? [])], resourceScopes: (agent.toolPolicy?.resourceScopes ?? []).map((scope) => scope.pattern) })),
+      agentManifests: this.agents.map(projectAgentManifest),
       resourceAccessEvents: traces.filter((event) => event.type === "tool.access.allowed" || event.type === "tool.access.denied").map((event) => ({ id: event.id, timestamp: event.timestamp, agentId: event.agentId ?? "unknown", agentName: this.agents.find((agent) => agent.agentId === event.agentId)?.name ?? "Unknown Agent", taskId: event.taskId ?? "unknown", tool: "resource.read" as const, resource: String(event.metadata?.resource ?? "unknown"), operation: "read" as const, decision: event.type === "tool.access.allowed" ? "ALLOW" as const : "DENY" as const, reason: String(event.metadata?.reason ?? "INVALID_GRANT") })),
       recommendations: traces.filter((event) => event.type === "policy.recommend_only").flatMap((event) => { const recommendationAction = actions.find((candidate) => candidate.id === event.metadata?.actionId); return recommendationAction ? [{ id: `recommendation-${recommendationAction.id}`, taskId: recommendationAction.taskId, actionType: recommendationAction.type, summary: recommendationAction.rationale ?? `Review proposed ${recommendationAction.type}`, decision: "RECOMMEND_ONLY" as const, reasons: Array.isArray(event.metadata?.reasons) ? event.metadata.reasons.map(String) : [], supportingEvidenceIds: evidence.filter((record) => record.status === "accepted").map((record) => record.id) }] : []; }),
     };
@@ -306,6 +311,10 @@ export class RelayWorkflowService implements RelaySessionReader {
     await this.store.append({ id: `${session.id}:${type}:${randomUUID()}`, traceId: session.traceId, sessionId: session.id, type, timestamp, ...details });
   }
 
+}
+
+function projectAgentManifest(agent: AgentManifest): RelayAgentManifestView {
+  return { agentId: agent.agentId, name: agent.name, capabilities: [...agent.capabilities], runnable: agent.runnable, allowedTools: [...(agent.toolPolicy?.allowedTools ?? [])], resourceScopes: (agent.toolPolicy?.resourceScopes ?? []).map((scope) => scope.pattern) };
 }
 
 function resourcesForTask(task: AgentTask): readonly string[] {

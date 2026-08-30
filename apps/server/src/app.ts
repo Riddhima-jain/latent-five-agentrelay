@@ -150,6 +150,8 @@ export async function createApp(
 
   app.get("/api/relay/sessions", async () => ({ sessions: await relayService.listSessions() }));
 
+  app.get("/api/relay/manifests", async () => ({ manifests: await relayService.listAgentManifests() }));
+
   app.post("/api/relay/sessions", async (request, reply) => {
     const input = createRelaySessionBody.parse(request.body ?? {});
     return reply.code(201).send({ session: await relayService.createSession(input) });
