@@ -43,6 +43,15 @@ export interface RelayTraceView {
   tone: "neutral" | "success" | "warning" | "danger";
 }
 
+export interface RelayAgentManifestView {
+  agentId: string;
+  name: string;
+  capabilities: string[];
+  runnable: boolean;
+  allowedTools: string[];
+  resourceScopes: string[];
+}
+
 export interface RelaySessionView {
   id: string;
   traceId: string;
@@ -55,7 +64,7 @@ export interface RelaySessionView {
   trace: RelayTraceView[];
   evidence?: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; status: string; createdAt: string }>;
   receipts?: Array<{ actionId: string; provider: "mock" | "resend"; externalReference: string; acceptedAt: string }>;
-  agentManifests?: Array<{ agentId: string; name: string; capabilities: string[]; runnable: boolean; allowedTools: string[]; resourceScopes: string[] }>;
+  agentManifests?: RelayAgentManifestView[];
   resourceAccessEvents?: Array<{ id: string; timestamp: string; agentId: string; agentName: string; taskId: string; tool: "resource.read"; resource: string; operation: "read"; decision: "ALLOW" | "DENY"; reason: string }>;
   recommendations?: Array<{ id: string; taskId: string; actionType: string; summary: string; decision: "RECOMMEND_ONLY"; reasons: string[]; supportingEvidenceIds: string[] }>;
 }
@@ -67,6 +76,7 @@ export interface RelaySessionReader {
   getSession(id: string): Awaitable<RelaySessionView>;
   listSessions(): Awaitable<RelaySessionView[]>;
   decideApproval(approvalId: string, decision: "approve" | "deny"): Awaitable<RelaySessionView>;
+  listAgentManifests(): Awaitable<RelayAgentManifestView[]>;
 }
 
 /** Owns independent in-memory demo sessions while policy stays server-controlled. */
@@ -93,6 +103,10 @@ export class DemoRelaySessionService implements RelaySessionReader {
 
   listSessions(): RelaySessionView[] {
     return [...this.sessions.values()].map((session) => session.snapshot());
+  }
+
+  listAgentManifests(): RelayAgentManifestView[] {
+    return SALES_RECOVERY_AGENTS.map((agent) => ({ agentId: agent.agentId, name: agent.name, capabilities: [...agent.capabilities], runnable: agent.runnable, allowedTools: [...(agent.toolPolicy?.allowedTools ?? [])], resourceScopes: (agent.toolPolicy?.resourceScopes ?? []).map((scope) => scope.pattern) }));
   }
 
   decideApproval(approvalId: string, decision: "approve" | "deny"): RelaySessionView {

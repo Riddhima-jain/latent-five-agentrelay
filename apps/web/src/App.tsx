@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type { Agent, AgentRun, Message, RelayAgentManifestView, SystemInfo } from "./types";
 import AgentRelayDashboard from "./AgentRelayDashboard";
 import BrandLogo from "./BrandLogo";
 
@@ -42,6 +42,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [system, setSystem] = useState<SystemInfo | null>(null);
+  const [manifests, setManifests] = useState<RelayAgentManifestView[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -51,7 +52,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
   const [authInput, setAuthInput] = useState("");
-  const [view, setView] = useState<"relay" | "playground">("relay");
+  const [view, setView] = useState<"relay" | "agents" | "playground">("relay");
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
@@ -61,6 +62,10 @@ export default function App() {
   const selected = useMemo(
     () => agents.find((agent) => agent.id === selectedId) ?? null,
     [agents, selectedId],
+  );
+  const selectedManifest = useMemo(
+    () => manifests.find((manifest) => manifest.agentId === selectedId) ?? null,
+    [manifests, selectedId],
   );
 
   const refreshAgents = useCallback(async () => {
@@ -81,7 +86,7 @@ export default function App() {
   }, []);
 
   const bootstrap = useCallback(async () => {
-    await Promise.all([refreshAgents(), api.system().then(setSystem)]);
+    await Promise.all([refreshAgents(), api.system().then(setSystem), api.relayManifests().then((result) => setManifests(result.manifests))]);
   }, [refreshAgents]);
 
   useEffect(() => {
@@ -321,14 +326,14 @@ export default function App() {
           onClick={() => {
             setForm(emptyForm);
             setShowCreate(true);
-            setView("playground");
+            setView("agents");
           }}
         >
           <span>＋</span> Create Agent
         </button>
 
         <div className="view-switcher" aria-label="Workspace view">
-          <button className={view === "playground" ? "active" : ""} onClick={() => setView("playground")}><span>♙</span> Agents</button>
+          <button className={view === "agents" ? "active" : ""} onClick={() => setView("agents")}><span>♙</span> Agents</button>
           <button className={view === "playground" ? "active" : ""} onClick={() => setView("playground")}><span>‹/›</span> Playground</button>
           <button className={view === "relay" ? "active" : ""} onClick={() => setView("relay")}><span>⌁</span> AgentRelay</button>
         </div>
@@ -344,7 +349,7 @@ export default function App() {
               key={agent.id}
               onClick={() => {
                 setSelectedId(agent.id);
-                setView("playground");
+                setView("agents");
               }}
             >
               <div className="agent-avatar">{agent.name.slice(0, 1).toUpperCase()}</div>
@@ -413,7 +418,14 @@ export default function App() {
               <div className="header-actions">
                 <button
                   className="button button-ghost"
-                  onClick={() => setShowSettings((value) => !value)}
+                  onClick={() => {
+                    if (view !== "agents") {
+                      setView("agents");
+                      setShowSettings(true);
+                    } else {
+                      setShowSettings((value) => !value);
+                    }
+                  }}
                   disabled={busy || selected.status === "busy"}
                 >
                   Settings
@@ -435,7 +447,7 @@ export default function App() {
               </div>
             </header>
 
-            {showSettings && (
+            {view === "agents" && showSettings && (
               <form className="settings-panel" onSubmit={saveAgent}>
                 <div className="settings-title">
                   <div>
@@ -485,7 +497,12 @@ export default function App() {
               </form>
             )}
 
-            <section className="playground">
+            {view === "agents" ? <section className="agent-overview" aria-labelledby="agent-access-title">
+              <header><div><span className="eyebrow">Agent identity</span><h2 id="agent-access-title">Capabilities &amp; permissions</h2></div><span className={`agent-registration-badge ${selectedManifest ? "registered" : "unregistered"}`}>{selectedManifest ? "AgentRelay registered" : "Not registered for workflows"}</span></header>
+              <div className="agent-identity-grid"><div><span>Starter Kit Agent ID</span><code>{selected.id}</code></div><div><span>Runtime state</span><strong>{selected.status}</strong></div><div><span>Workspace</span><code>{selected.workspacePath}</code></div></div>
+              {selectedManifest ? <div className="agent-permission-grid"><article><span>Capabilities</span><div>{selectedManifest.capabilities.map((capability) => <code key={capability}>{capability}</code>)}</div></article><article><span>Allowed tools</span><div>{selectedManifest.allowedTools.length ? selectedManifest.allowedTools.map((tool) => <code key={tool}>{tool}</code>) : <em>No protected tools</em>}</div></article><article><span>Resource scopes</span><div>{selectedManifest.resourceScopes.length ? selectedManifest.resourceScopes.map((scope) => <code key={scope}>{scope}</code>) : <em>No raw protected-resource access</em>}</div></article></div> : <div className="agent-permission-empty"><strong>This Agent can use the Playground but is not eligible for AgentRelay routing.</strong><p>Capabilities and protected-resource access are granted only through a server-owned AgentRelay manifest; creating an Agent does not grant them automatically.</p></div>}
+              <div className="permission-boundary-note"><span>i</span><p><strong>Server-enforced boundary</strong> The Agent cannot change these capabilities, tools, or scopes from its prompt or workspace instructions.</p></div>
+            </section> : <section className="playground">
               <div className="playground-topbar">
                 <div>
                   <span className="eyebrow">Playground</span>
@@ -589,7 +606,7 @@ export default function App() {
                   </button>
                 </div>
               </form>
-            </section>
+            </section>}
           </>
         ) : (
           <div className="no-agent">

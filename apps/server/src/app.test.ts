@@ -82,6 +82,15 @@ describe("HTTP boundary", () => {
     await app.close();
   });
 
+  it("returns safe registered-Agent permission summaries", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
+    const response = await app.inject({ method: "GET", url: "/api/relay/manifests" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().manifests).toHaveLength(4);
+    expect(response.json().manifests[0]).not.toHaveProperty("grantId");
+    await app.close();
+  });
+
   it("rejects unknown Relay resources and injected action contents", async () => {
     const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
     const missing = await app.inject({ method: "GET", url: "/api/relay/sessions/not-found" });
