@@ -37,7 +37,8 @@ async function waitFor(service: RelayWorkflowService, id: string, statuses: stri
 describe("RelayWorkflowService", () => {
   it("runs the coordinator, persists evidence, and executes one approved mock email", async () => {
     const { service, store } = await createHarness();
-    const created = await service.createSession({ scenario: "normal" });
+    const created = await service.createSession({ goal: "Investigate the sales decline", scenario: "normal" });
+    expect(created.goal).toBe("Investigate the sales decline");
     const pending = await waitFor(service, created.id, ["awaiting_approval"]);
     expect(pending.tasks.every((task) => task.status === "completed" || task.status === "approval_required")).toBe(true);
     expect(pending.evidence?.length).toBeGreaterThanOrEqual(4);

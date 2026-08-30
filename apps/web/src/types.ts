@@ -105,6 +105,7 @@ export interface RelaySession {
   id: string;
   traceId: string;
   title: string;
+  goal: string;
   status: "running" | "awaiting_approval" | "completed" | "failed" | "degraded";
   startedAt: string;
   tasks: RelayTask[];

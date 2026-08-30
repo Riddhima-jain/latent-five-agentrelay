@@ -12,25 +12,28 @@ Use only the controlled fixtures committed under `fixtures/sales-recovery/`.
 
 ## Positive path
 
-1. Select **Normal run** and choose **New Workflow**.
-2. Show Research and Finance running independently, followed by Strategy and Outreach.
-3. Open the evidence and trace panels to show real accepted Agent output.
-4. At `REQUIRE_APPROVAL`, explain that the browser submits only the decision.
-5. Approve the action.
-6. Show the payload hash, `action.execution_started`, `action.executed`, and the
+1. Enter a business goal on the **Start a new workflow** screen. Suggested
+   prompts fill the textarea but never start execution automatically.
+2. Leave **Demo scenario** set to **Normal workflow**, then choose
+   **Start AgentRelay Workflow**.
+3. Show Research and Finance running independently, followed by Strategy and Outreach.
+4. Open the evidence and trace panels to show real accepted Agent output.
+5. At `REQUIRE_APPROVAL`, explain that the browser submits only the decision.
+6. Approve the action.
+7. Show the payload hash, `action.execution_started`, `action.executed`, and the
    persisted mock receipt.
-7. Refresh the browser and reopen the session to prove persistence.
+8. Return to **All workflows** and reopen the session to prove persistence.
 
 ## Denial path
 
-1. Select **Denial scenario** and start a workflow.
+1. Expand **Demo scenario**, select **Policy denial**, and start a workflow.
 2. The real Agents still run, but the controlled outreach result proposes a
    prohibited action.
 3. Show `policy.denied`, the degraded session, no approval control, and no receipt.
 
 ## Retry and failure path
 
-1. Select **Timeout scenario** and start a workflow.
+1. Expand **Demo scenario**, select **Timeout and retry**, and start a workflow.
 2. Show `retry.scheduled` events produced by the coordinator lifecycle.
 3. Show the Research task fail after its configured attempts and downstream
    tasks remain blocked.

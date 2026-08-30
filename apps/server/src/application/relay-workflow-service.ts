@@ -187,7 +187,7 @@ export class RelayWorkflowService implements RelaySessionReader {
       rationale: action.rationale ?? "External action requires approval.",
     } : null;
     return {
-      id: session.id, traceId: session.traceId, title: "Workflow Overview",
+      id: session.id, traceId: session.traceId, title: "Workflow Overview", goal: session.goal,
       status: session.status === "completed" && action && !approvalRecord ? "running" : projectSessionStatus(session.status), startedAt: session.createdAt,
       tasks: tasks.map((task) => {
         const agent = SALES_RECOVERY_AGENTS.find((candidate) => candidate.agentId === task.assignedAgentId);

@@ -115,6 +115,8 @@ describe("HTTP boundary", () => {
 
     const invalid = await app.inject({ method: "POST", url: "/api/relay/sessions", payload: { scenario: "fake-success" } });
     expect(invalid.statusCode).toBe(400);
+    const emptyGoal = await app.inject({ method: "POST", url: "/api/relay/sessions", payload: { goal: "   " } });
+    expect(emptyGoal.statusCode).toBe(400);
     await app.close();
   });
 });
