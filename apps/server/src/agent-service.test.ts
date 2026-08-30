@@ -7,6 +7,7 @@ import { loadConfig } from "./config.js";
 import { JsonStore } from "./store.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
+import { provisionDemoAgents } from "./application/demo-agent-provisioner.js";
 
 class FakeRunner implements AgentRunner {
   async run(request: RunnerRequest): Promise<RunnerResult> {
@@ -57,6 +58,15 @@ async function makeService(runner: AgentRunner = new FakeRunner()): Promise<Agen
 }
 
 describe("Agent lifecycle", () => {
+  it("provisions four real demo Agents idempotently through AgentService", async () => {
+    const service = await makeService();
+    const first = await provisionDemoAgents(service);
+    const second = await provisionDemoAgents(service);
+    expect(service.listAgents()).toHaveLength(4);
+    expect(second.ids).toEqual(first.ids);
+    expect(first.manifests.map((manifest) => manifest.agentId).sort()).toEqual(Object.values(first.ids).sort());
+    expect(first.manifests.find((manifest) => manifest.capabilities.includes("strategy"))?.toolPolicy?.allowedTools).toEqual([]);
+  });
   it("creates, updates, stops, starts and deletes an Agent", async () => {
     const service = await makeService();
     const agent = await service.createAgent({ name: "Builder" });

@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-import type { AgentExecutor, ExecutionContext } from "../domain/ports.js";
+import type { AgentExecutor, ExecutionContext, ProtectedResourceReader } from "../domain/ports.js";
 import type { AgentExecutionResult, AgentTask } from "../domain/task.js";
 import type { AgentRunner } from "../types.js";
 import { validateAgentExecutionResult } from "./result-validator.js";
@@ -19,6 +17,9 @@ export class CodexAgentAdapter implements AgentExecutor {
   constructor(
     private readonly runner: AgentRunner,
     agents: readonly WorkflowAgentRuntime[],
+    private readonly resources: ProtectedResourceReader,
+    private readonly gatewayBaseUrl = "http://127.0.0.1:3000/api/middleware/resources",
+    private readonly resourceHelperCommand = "agentrelay-resource",
   ) {
     for (const agent of agents) this.agents.set(agent.agentId, { ...agent });
   }
@@ -30,16 +31,17 @@ export class CodexAgentAdapter implements AgentExecutor {
     const agent = this.agents.get(agentId);
     if (!agent) throw new Error(`Workflow agent is not registered: ${agentId}`);
 
+    if (context.allowedResources.length > 0 && !context.accessGrantId) throw new Error("Protected resource access requires a run-scoped grant");
+    const protectedResources = await Promise.all(context.allowedResources.map(async (resource) => ({ resource, ...(await this.resources.readResource({ grantId: context.accessGrantId!, resource })) })));
     const sessionKey = `${context.sessionId}:${agentId}`;
-    const resourceHelperEnvironment = await prepareResourceHelper(agent.workspacePath, context);
     const response = await this.runner.run({
       // A unique runner identity prevents an Agent's normal Playground turn from
       // colliding with a workflow run, particularly for the container runner.
       agentId: workflowRunnerId(sessionKey),
       workspacePath: agent.workspacePath,
-      prompt: buildWorkflowPrompt(task, context),
+      prompt: buildWorkflowPrompt(task, context, protectedResources, this.resourceHelperCommand),
       threadId: this.workflowThreads.get(sessionKey) ?? null,
-      ...(resourceHelperEnvironment ? { environment: resourceHelperEnvironment } : {}),
+      ...(context.accessGrantId ? { environment: { AGENTRELAY_ACCESS_GRANT: context.accessGrantId, AGENTRELAY_RESOURCE_GATEWAY: this.gatewayBaseUrl } } : {}),
     });
     if (response.threadId) this.workflowThreads.set(sessionKey, response.threadId);
 
@@ -57,11 +59,14 @@ export function workflowRunnerId(sessionKey: string): string {
 export function buildWorkflowPrompt(
   task: AgentTask,
   context: ExecutionContext,
+  protectedResources: readonly { resource: string; content: string; contentType: string; sourceRef: string }[],
+  resourceHelperCommand = "agentrelay-resource",
 ): string {
   return [
     "You are a workflow participant. Treat the following Context Capsule as the complete workflow context.",
     "Do not rely on prior conversations or instructions outside this prompt.",
-    "Use only the logical protected-resource handles explicitly included in the Context Capsule. Raw protected files are not mounted in this workspace. Do not execute external actions; propose them in the output only.",
+    "Use only the protected resource excerpts supplied below and preserve their sourceRef values. Do not execute external actions; propose them in the output only.",
+    `For an additional permitted read, use ${resourceHelperCommand} read <logical-resource>. The helper attaches your run-scoped grant; never print its environment variables.`,
     "Return exactly one JSON object, with no Markdown fences or commentary, matching:",
     '{"summary":"string","evidence":[{"claim":"string","sourceRefs":["string"]}],"proposedActions":[{"type":"string","target":"string","payload":{},"rationale":"string optional"}]}',
     "",
@@ -69,33 +74,13 @@ export function buildWorkflowPrompt(
     ...(task.requiredPermissions.includes("external_write") ? [
       'For this outreach task, propose exactly one SEND_EMAIL action. Its payload must be {"recipient":"string","subject":"string","body":"string"}. Do not send it yourself.',
     ] : []),
+    ...(task.id === "strategy" ? [
+      "If the market and finance evidence support a price response, represent it as an UPDATE_PRICING proposedAction. AgentRelay—not you—will determine whether it may execute.",
+    ] : []),
     `Context Capsule: ${JSON.stringify({ goal: context.goal, constraints: context.constraints, dependencyEvidence: context.dependencyEvidence })}`,
-    `Resource access: ${JSON.stringify(context.resourceAccess ?? { allowedResourceHandles: context.allowedResources })}`,
-    ...(context.resourceAccess && context.accessGrant ? ["Read a listed protected resource only with: node .agentrelay/bin/agentrelay-resource.mjs read <logical-resource-handle>"] : []),
+    `Protected resources: ${JSON.stringify(protectedResources)}`,
   ].join("\n");
 }
-
-async function prepareResourceHelper(workspacePath: string, context: ExecutionContext): Promise<Record<string, string> | undefined> {
-  if (!context.resourceAccess || !context.accessGrant) return undefined;
-  const helperDirectory = path.join(workspacePath, ".agentrelay", "bin");
-  await mkdir(helperDirectory, { recursive: true });
-  await writeFile(path.join(helperDirectory, "agentrelay-resource.mjs"), RESOURCE_HELPER_SOURCE, "utf8");
-  return {
-    AGENTRELAY_GATEWAY_BASE_URL: context.resourceAccess.gatewayBaseUrl,
-    AGENTRELAY_GRANT_ID: context.accessGrant.id,
-  };
-}
-
-const RESOURCE_HELPER_SOURCE = `const [operation, resource] = process.argv.slice(2);
-if (operation !== "read" || !resource) { console.error("usage: agentrelay-resource read <logical-resource-handle>"); process.exit(2); }
-const baseUrl = process.env.AGENTRELAY_GATEWAY_BASE_URL;
-const grantId = process.env.AGENTRELAY_GRANT_ID;
-if (!baseUrl || !grantId) { console.error("AgentRelay resource access is not configured for this run"); process.exit(2); }
-const url = new URL("/api/middleware/resources/" + encodeURIComponent(resource), baseUrl);
-const response = await fetch(url, { headers: { "X-AgentRelay-Grant": grantId } });
-if (!response.ok) { console.error("Resource access denied: " + response.status); process.exit(response.status === 403 ? 3 : 1); }
-process.stdout.write(await response.text());
-`;
 
 function parseJson(output: string): unknown {
   try {

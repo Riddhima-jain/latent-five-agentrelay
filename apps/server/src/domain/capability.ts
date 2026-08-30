@@ -12,6 +12,6 @@ export interface AgentManifest {
   permissions: AgentPermission[];
   /** A stopped, busy, or otherwise unavailable agent is not eligible for routing. */
   runnable: boolean;
-  /** Trusted resource-tool policy, independent from external-action permissions. */
-  toolPolicy: import("./tool-access.js").AgentAccessPolicy;
+  toolPolicy?: { allowedTools: ToolName[]; resourceScopes: ResourceScope[] };
 }
+import type { ToolName, ResourceScope } from "./tool-access.js";

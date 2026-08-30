@@ -4,6 +4,7 @@ import type { SharedSession } from "./session.js";
 import type { AgentExecutionResult, AgentTask } from "./task.js";
 import type { TraceEvent } from "./trace.js";
 import type { AccessGrant } from "./tool-access.js";
+import type { AgentManifest } from "./capability.js";
 
 export interface ExecutionContext {
   sessionId: string;
@@ -12,14 +13,11 @@ export interface ExecutionContext {
   constraints: string[];
   allowedResources: string[];
   dependencyEvidence: EvidenceRecord[];
-  /** Logical protected-resource handles only; no raw paths or grant token are exposed. */
-  resourceAccess?: {
-    gatewayBaseUrl: string;
-    allowedResourceHandles: string[];
-  };
-  /** Opaque server-issued grant for runtime configuration; never prompt content. */
-  accessGrant?: AccessGrant;
+  accessGrantId?: string;
 }
+
+export interface AccessGrantIssuer { issueGrant(input: { sessionId: string; taskId: string; agent: AgentManifest }): Promise<AccessGrant>; revokeGrant?(grantId: string): Promise<void> }
+export interface ProtectedResourceReader { readResource(input: { grantId: string; resource: string }): Promise<{ content: string; contentType: string; sourceRef: string }> }
 
 export interface AgentExecutor {
   execute(agentId: string, task: AgentTask, context: ExecutionContext): Promise<AgentExecutionResult>;

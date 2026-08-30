@@ -1,54 +1,27 @@
+import path from "node:path";
 import type { AccessGrant, ToolAccessDecision, ToolAccessRequest } from "../domain/tool-access.js";
 
-export interface ToolPolicyService {
-  evaluate(grant: AccessGrant, request: ToolAccessRequest): ToolAccessDecision;
+export function normalizeLogicalResource(resource: string): string {
+  let decoded: string;
+  try { decoded = decodeURIComponent(resource); } catch { throw new Error("RESOURCE_OUT_OF_SCOPE"); }
+  if (!decoded || decoded.includes("\0") || decoded.includes("\\") || decoded.startsWith("/") || path.posix.isAbsolute(decoded)) throw new Error("RESOURCE_OUT_OF_SCOPE");
+  const normalized = path.posix.normalize(decoded);
+  if (normalized === ".." || normalized.startsWith("../") || normalized !== decoded || decoded.includes("%")) throw new Error("RESOURCE_OUT_OF_SCOPE");
+  return normalized;
 }
 
-export class DeterministicToolPolicyService implements ToolPolicyService {
-  constructor(private readonly now: () => string = () => new Date().toISOString()) {}
-
-  evaluate(grant: AccessGrant, request: ToolAccessRequest): ToolAccessDecision {
-    if (!grant.id || request.grantId !== grant.id) return deny("INVALID_GRANT");
-    if (grant.status === "revoked") return deny("GRANT_REVOKED");
-    if (grant.status === "expired" || (grant.expiresAt !== undefined && Date.parse(grant.expiresAt) <= Date.parse(this.now()))) return deny("GRANT_EXPIRED");
-    if (!grant.allowedTools.includes(request.tool)) return deny("TOOL_NOT_ALLOWED");
-    const resource = normalizeLogicalResource(request.resource);
-    const matchingScope = grant.resourceScopes.find((scope) => scopeMatches(scope.pattern, resource));
-    if (!matchingScope) return deny("RESOURCE_OUT_OF_SCOPE");
-    if (!matchingScope.permissions.includes(request.operation)) return deny("OPERATION_NOT_ALLOWED");
+export class ToolPolicyService {
+  constructor(private readonly now: () => number = () => Date.now()) {}
+  evaluate(grant: AccessGrant | null, request: ToolAccessRequest): ToolAccessDecision {
+    if (!grant || grant.id !== request.grantId) return { decision: "DENY", reason: "INVALID_GRANT" };
+    if (grant.status === "revoked") return { decision: "DENY", reason: "GRANT_REVOKED" };
+    if (grant.status === "expired" || (grant.expiresAt && Date.parse(grant.expiresAt) <= this.now())) return { decision: "DENY", reason: "GRANT_EXPIRED" };
+    if (!grant.allowedTools.includes(request.tool)) return { decision: "DENY", reason: "TOOL_NOT_ALLOWED" };
+    let resource: string;
+    try { resource = normalizeLogicalResource(request.resource); } catch { return { decision: "DENY", reason: "RESOURCE_OUT_OF_SCOPE" }; }
+    const scope = grant.resourceScopes.find((candidate) => candidate.pattern.endsWith("/*") ? resource.startsWith(candidate.pattern.slice(0, -1)) : resource === candidate.pattern);
+    if (!scope) return { decision: "DENY", reason: "RESOURCE_OUT_OF_SCOPE" };
+    if (!scope.permissions.includes(request.operation)) return { decision: "DENY", reason: "OPERATION_NOT_ALLOWED" };
     return { decision: "ALLOW", reason: "GRANT_PERMITS_REQUEST" };
   }
-}
-
-export function normalizeLogicalResource(resource: string): string {
-  let decoded = resource;
-  for (let i = 0; i < 3; i += 1) {
-    try {
-      const next = decodeURIComponent(decoded);
-      if (next === decoded) break;
-      decoded = next;
-    } catch {
-      throw new Error("Invalid encoded resource identifier");
-    }
-  }
-  if (!decoded || decoded.includes("\0") || decoded.includes("\\") || decoded.startsWith("/") || /^[a-zA-Z]:/.test(decoded)) {
-    throw new Error("Invalid logical resource identifier");
-  }
-  const segments = decoded.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new Error("Invalid logical resource identifier");
-  }
-  return decoded;
-}
-
-export function scopeMatches(pattern: string, resource: string): boolean {
-  if (pattern.endsWith("/*")) {
-    const prefix = pattern.slice(0, -1);
-    return resource.startsWith(prefix) && resource.length > prefix.length;
-  }
-  return resource === pattern;
-}
-
-function deny(reason: Extract<ToolAccessDecision, { decision: "DENY" }> ["reason"]): ToolAccessDecision {
-  return { decision: "DENY", reason };
 }

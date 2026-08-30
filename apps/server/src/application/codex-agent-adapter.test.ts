@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+import type { ProtectedResourceReader } from "../domain/ports.js";
 import { CodexAgentAdapter, workflowRunnerId } from "./codex-agent-adapter.js";
 import type { AgentRunner, RunnerRequest } from "../types.js";
 import type { AgentTask } from "../domain/task.js";
@@ -13,7 +11,7 @@ const task: AgentTask = {
 };
 const context: ExecutionContext = {
   sessionId: "workflow-1", taskId: "research", goal: "Recover sales", constraints: ["No external action"],
-  allowedResources: ["fixture://market-report.json"], dependencyEvidence: [],
+  allowedResources: ["market/market-report.json"], dependencyEvidence: [], accessGrantId: "opaque-test-grant",
 };
 
 function runnerWith(output: string) {
@@ -24,20 +22,25 @@ function runnerWith(output: string) {
   };
   return { runner, requests };
 }
+const resources: ProtectedResourceReader = { async readResource(input) {
+  expect(input).toEqual({ grantId: "opaque-test-grant", resource: "market/market-report.json" });
+  return { content: '{"observation":"Demand declined"}', contentType: "application/json", sourceRef: "resource://market/market-report.json" };
+} };
+
 describe("CodexAgentAdapter", () => {
   it("uses a new workflow-scoped session, provides only the capsule, and validates the response", async () => {
     const { runner, requests } = runnerWith(JSON.stringify({ summary: "Demand declined", evidence: [], proposedActions: [] }));
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], resources);
     await expect(adapter.execute("research-agent", task, context)).resolves.toMatchObject({ summary: "Demand declined" });
     expect(requests[0]).toMatchObject({ threadId: null, workspacePath: "/tmp/research", agentId: workflowRunnerId("workflow-1:research-agent") });
-    expect(requests[0]?.prompt).toContain("Raw protected files are not mounted");
-    expect(requests[0]?.prompt).toContain("fixture://market-report.json");
+    expect(requests[0]?.prompt).toContain('"sourceRef":"resource://market/market-report.json"');
+    expect(requests[0]?.prompt).not.toContain("opaque-test-grant");
     expect(requests[0]?.prompt).not.toContain("Playground");
   });
 
   it("reuses a thread only for the same workflow participant", async () => {
     const { runner, requests } = runnerWith(JSON.stringify({ summary: "ok", evidence: [], proposedActions: [] }));
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], resources);
     await adapter.execute("research-agent", task, context);
     await adapter.execute("research-agent", task, context);
     await adapter.execute("research-agent", { ...task, sessionId: "workflow-2" }, { ...context, sessionId: "workflow-2" });
@@ -45,27 +48,15 @@ describe("CodexAgentAdapter", () => {
     expect(requests[2]?.prompt).not.toContain("workflow-1");
   });
 
-  it("configures the resource helper with an opaque grant outside the prompt", async () => {
-    const workspace = await mkdtemp(path.join(os.tmpdir(), "agentrelay-helper-"));
-    try {
-      const { runner, requests } = runnerWith(JSON.stringify({ summary: "ok", evidence: [], proposedActions: [] }));
-      const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: workspace }]);
-      await adapter.execute("research-agent", task, { ...context, resourceAccess: { gatewayBaseUrl: "http://127.0.0.1:3000", allowedResourceHandles: ["market/market-report.json"] }, accessGrant: { id: "opaque-grant", sessionId: "workflow-1", taskId: "research", agentId: "research-agent", allowedTools: ["resource.read"], resourceScopes: [], status: "active", createdAt: "2026-08-30T00:00:00.000Z" } });
-      expect(requests[0]?.environment).toEqual({ AGENTRELAY_GATEWAY_BASE_URL: "http://127.0.0.1:3000", AGENTRELAY_GRANT_ID: "opaque-grant" });
-      expect(requests[0]?.prompt).not.toContain("opaque-grant");
-      expect(requests[0]?.prompt).toContain("agentrelay-resource.mjs read");
-    } finally { await rm(workspace, { recursive: true, force: true }); }
-  });
-
   it("fails closed when Codex returns prose or a malformed structured result", async () => {
     const { runner } = runnerWith("Here is my answer: {});");
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], resources);
     await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("AGENT_RESULT_INVALID");
   });
 
   it("fails closed when the JSON result omits a required field", async () => {
     const { runner } = runnerWith(JSON.stringify({ summary: "Incomplete", evidence: [] }));
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], resources);
     await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("AGENT_RESULT_INVALID");
   });
 
@@ -74,7 +65,7 @@ describe("CodexAgentAdapter", () => {
       async run() { throw new Error("controlled runtime failure"); },
       async cancel() { return false; }, async isAvailable() { return true; },
     };
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], resources);
     await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("controlled runtime failure");
   });
 });

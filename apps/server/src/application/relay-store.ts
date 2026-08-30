@@ -66,6 +66,13 @@ export class RelayJsonStore implements SessionStore, TraceSink {
     }
   }
 
+  /** Clears only AgentRelay workflow state; Starter Kit Agents and workspaces live in a separate store. */
+  async resetDemo(): Promise<void> {
+    await this.mutate((database) => {
+      Object.assign(database, emptyDatabase());
+    });
+  }
+
   async get(sessionId: string): Promise<SharedSession | null> {
     return structuredClone(this.data.sessions.find((session) => session.id === sessionId) ?? null);
   }

@@ -1,50 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { createDemoAgentManifests } from "./agent-manifest-bootstrap.js";
-import { AgentManifestRegistryError, PersistedAgentManifestRegistry, type StarterKitAgent } from "./agent-manifest-registry.js";
+import type { Agent } from "../types.js";
+import { AgentManifestRegistry } from "./agent-manifest-registry.js";
 
-const ids = {
-  researchAgentId: "agt-research",
-  financeAgentId: "agt-finance",
-  strategyAgentId: "agt-strategy",
-  outreachAgentId: "agt-outreach",
-};
+const agent = (id: string, status: Agent["status"] = "ready"): Agent => ({ id, name: id, description: "", instructions: "", status, workspacePath: `/tmp/${id}`, codexThreadId: null, lastError: null, createdAt: "2026-08-30T00:00:00.000Z", updatedAt: "2026-08-30T00:00:00.000Z" });
 
-function registry(agents: readonly StarterKitAgent[] = Object.values(ids).map((id) => ({ id, status: "ready" as const }))) {
-  const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  return new PersistedAgentManifestRegistry(createDemoAgentManifests(ids), {
-    async get(agentId) { return byId.get(agentId) ?? null; },
-  });
-}
-
-describe("PersistedAgentManifestRegistry", () => {
-  it("links every required capability to its real persisted Starter Kit Agent ID", async () => {
-    const subject = registry();
-    await expect(subject.findEligible({ capability: "market_research" })).resolves.toMatchObject([{ agentId: ids.researchAgentId }]);
-    await expect(subject.findEligible({ capability: "financial_analysis" })).resolves.toMatchObject([{ agentId: ids.financeAgentId }]);
-    await expect(subject.findEligible({ capability: "strategy" })).resolves.toMatchObject([{ agentId: ids.strategyAgentId }]);
-    await expect(subject.findEligible({ capability: "external_communication", requiredPermissions: ["external_write"] })).resolves.toMatchObject([{ agentId: ids.outreachAgentId }]);
+describe("AgentManifestRegistry", () => {
+  it("routes only registered, real, runnable Agents", async () => {
+    const agents = [agent("real-research"), agent("unregistered"), agent("stopped-finance", "stopped")];
+    const service = { listAgents: () => agents, getAgent: (id: string) => { const value = agents.find((item) => item.id === id); if (!value) throw new Error("not found"); return value; } };
+    const registry = new AgentManifestRegistry(service as never, [
+      { agentId: "real-research", name: "Research", capabilities: ["market_research"], permissions: ["read"], runnable: true },
+      { agentId: "stopped-finance", name: "Finance", capabilities: ["financial_analysis"], permissions: ["read"], runnable: true },
+    ]);
+    expect((await registry.findEligible({ capability: "market_research", requiredPermissions: ["read"] })).map((item) => item.agentId)).toEqual(["real-research"]);
+    expect(await registry.findEligible({ capability: "financial_analysis" })).toEqual([]);
+    expect(await registry.get("unregistered")).toBeNull();
+    await expect(registry.requireRunnable("stopped-finance")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(new AgentManifestRegistry(service as never, [{ agentId: "missing", name: "Missing", capabilities: ["x"], permissions: [], runnable: true }]).list()).rejects.toMatchObject({ statusCode: 409 });
   });
 
-  it("rejects a manifest that references a nonexistent Starter Kit Agent", async () => {
-    const subject = registry([]);
-    await expect(subject.get(ids.researchAgentId)).rejects.toMatchObject({ code: "AGENT_NOT_FOUND" } satisfies Partial<AgentManifestRegistryError>);
-  });
-
-  it("rejects a stopped manifest Agent when execution requires it to be runnable", async () => {
-    const subject = registry([{ id: ids.researchAgentId, status: "stopped" }]);
-    await expect(subject.get(ids.researchAgentId)).rejects.toMatchObject({ code: "AGENT_NOT_RUNNABLE" } satisfies Partial<AgentManifestRegistryError>);
-  });
-
-  it("does not make an unregistered real Starter Kit Agent eligible", async () => {
-    const subject = registry([{ id: "agt-unregistered", status: "ready" }]);
-    await expect(subject.get("agt-unregistered")).resolves.toBeNull();
-    await expect(subject.findEligible({ capability: "financial_analysis" })).resolves.toEqual([]);
-  });
-
-  it("never exposes mutable manifest storage", async () => {
-    const subject = registry();
-    const [manifest] = await subject.findEligible({ capability: "market_research" });
-    manifest!.capabilities.push("forged");
-    await expect(subject.findEligible({ capability: "forged" })).resolves.toEqual([]);
+  it("does not expose mutable manifest policy storage", async () => {
+    const agents = [agent("real-research")];
+    const registry = new AgentManifestRegistry({ listAgents: () => agents, getAgent: () => agents[0]! } as never, [{
+      agentId: "real-research", name: "Research", capabilities: ["market_research"], permissions: ["read"], runnable: true,
+      toolPolicy: { allowedTools: ["resource.read"], resourceScopes: [{ pattern: "market/*", permissions: ["read"] }] },
+    }]);
+    const manifest = (await registry.get("real-research"))!;
+    manifest.toolPolicy!.resourceScopes[0]!.permissions.length = 0;
+    expect((await registry.get("real-research"))!.toolPolicy!.resourceScopes[0]!.permissions).toEqual(["read"]);
   });
 });

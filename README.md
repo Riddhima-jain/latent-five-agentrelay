@@ -52,10 +52,10 @@ files. Timeout and denial scenarios exercise the same coordinator, retry,
 evidence, policy, and trace boundaries with deterministic fault triggers. See
 [the demo SOP](docs/DEMO.md) for the positive and negative paths.
 
-The workflow dashboard also defines an additive browser contract for future
-real-Agent manifest summaries, protected-resource access decisions, and
-`RECOMMEND_ONLY` outcomes. Until the backend Resource Gateway is implemented,
-these panels show explicit empty states and do not fabricate permission events.
+The workflow dashboard displays real-Agent manifest summaries,
+protected-resource access decisions, and `RECOMMEND_ONLY` outcomes returned by
+the backend Resource Gateway. Access grants remain server/runtime-only and are
+never returned to the browser.
 See the [architecture](docs/ARCHITECTURE.md#resource-access-contract) and
 [threat model](docs/threat-model.md) for the implementation boundary.
 
@@ -258,6 +258,27 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
 
 See [.env.example](.env.example) for all Runtime and resource-limit options.
+
+## AgentRelay demo bootstrap
+
+Provision or update the four specialist Agents through the normal Starter Kit
+Agent persistence path:
+
+```bash
+npm run seed:agentrelay-demo
+```
+
+The command is idempotent and prints only the real persisted Agent IDs. To clear
+AgentRelay workflow sessions, approvals, traces, and mock receipts while
+preserving Starter Kit Agents and their workspaces:
+
+```bash
+npm run reset:agentrelay-demo
+```
+
+Protected demo inputs live under `fixtures/sales-recovery/protected/`. They are
+not copied or mounted into Agent workspaces. Reads use logical resource IDs and
+run-scoped grants through the Fastify Resource Gateway.
 
 ## How it works
 

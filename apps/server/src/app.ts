@@ -9,7 +9,7 @@ import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 import { registerGeminiResponsesAdapter } from "./gemini-responses-adapter.js";
 import { DemoRelaySessionService, type RelaySessionReader } from "./application/relay-session-service.js";
-import { ResourceAccessError, type ResourceGatewayService } from "./application/resource-gateway-service.js";
+import type { ResourceGatewayService } from "./application/resource-gateway-service.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -28,7 +28,6 @@ const messageBody = z.object({
 const relaySessionParams = z.object({ id: z.string().trim().min(1).max(120) });
 const relayApprovalParams = z.object({ id: z.string().trim().min(1).max(160) });
 const relayDecisionBody = z.object({ decision: z.enum(["approve", "deny"]) }).strict();
-const protectedResourceParams = z.object({ resourceId: z.string().trim().min(1).max(300) });
 const createRelaySessionBody = z.object({
   goal: z.string().trim().min(1).max(2_000).optional(),
   scenario: z.enum(["normal", "timeout", "denial"]).default("normal"),
@@ -62,7 +61,8 @@ export async function createApp(
       !config.authToken ||
       !request.url.startsWith("/api/") ||
       request.url === "/api/health" ||
-      request.url === "/api/auth"
+      request.url === "/api/auth" ||
+      request.url.startsWith("/api/middleware/resources/")
     ) {
       return;
     }
@@ -161,22 +161,11 @@ export async function createApp(
     return { session: await relayService.decideApproval(id, decision) };
   });
 
-  app.get("/api/middleware/resources/:resourceId", async (request, reply) => {
-    if (!resourceGateway) return reply.code(503).send({ error: "RESOURCE_GATEWAY_UNAVAILABLE" });
-    const { resourceId } = protectedResourceParams.parse(request.params);
-    const grantId = request.headers["x-agentrelay-grant"];
-    if (typeof grantId !== "string" || !grantId) {
-      return reply.code(403).send({ error: "RESOURCE_ACCESS_DENIED", reason: "INVALID_GRANT" });
-    }
-    try {
-      const resource = await resourceGateway.readResource({ grantId, resource: decodeURIComponent(resourceId) });
-      return reply.type(resource.contentType).send(resource.content);
-    } catch (error) {
-      if (error instanceof ResourceAccessError) {
-        return reply.code(403).send({ error: "RESOURCE_ACCESS_DENIED", reason: error.reason });
-      }
-      throw error;
-    }
+  if (resourceGateway) app.get("/api/middleware/resources/*", async (request, reply) => {
+    const resource = z.string().trim().min(1).max(240).parse((request.params as { "*"?: unknown })["*"]);
+    const grantId = z.string().trim().min(32).max(256).parse(request.headers["x-agentrelay-grant"]);
+    const result = await resourceGateway.readResource({ grantId, resource });
+    return reply.header("content-type", result.contentType).send(result.content);
   });
 
   if (config.nodeEnv === "production") {

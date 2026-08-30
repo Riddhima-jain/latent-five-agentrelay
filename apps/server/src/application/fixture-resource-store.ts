@@ -2,25 +2,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeLogicalResource } from "./tool-policy-service.js";
 
-export interface ProtectedResourceStore {
-  read(resource: string): Promise<{ content: string; contentType: string }>;
-}
-
-export class FixtureResourceStore implements ProtectedResourceStore {
+export class FixtureResourceStore {
   constructor(private readonly protectedRoot: string) {}
-
   async read(resource: string): Promise<{ content: string; contentType: string }> {
-    const normalized = normalizeLogicalResource(resource);
-    const root = path.resolve(this.protectedRoot);
-    const target = path.resolve(root, normalized);
-    if (!target.startsWith(`${root}${path.sep}`)) throw new Error("Resource escapes protected fixture root");
-    const content = await readFile(target, "utf8");
-    return { content, contentType: contentTypeFor(normalized) };
+    const logical = normalizeLogicalResource(resource);
+    const absolute = path.resolve(this.protectedRoot, logical);
+    const prefix = path.resolve(this.protectedRoot) + path.sep;
+    if (!absolute.startsWith(prefix)) throw new Error("RESOURCE_OUT_OF_SCOPE");
+    const content = await readFile(absolute, "utf8");
+    return { content, contentType: logical.endsWith(".json") ? "application/json" : logical.endsWith(".csv") ? "text/csv" : "text/plain" };
   }
-}
-
-function contentTypeFor(resource: string): string {
-  if (resource.endsWith(".json")) return "application/json";
-  if (resource.endsWith(".csv")) return "text/csv";
-  return "application/octet-stream";
 }

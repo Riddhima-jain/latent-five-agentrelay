@@ -1,106 +1,47 @@
-import type { AgentManifest, AgentPermission } from "../domain/capability.js";
+import type { AgentService } from "../agent-service.js";
+import type { AgentManifest } from "../domain/capability.js";
+import { HttpError } from "../errors.js";
 
-export interface StarterKitAgent {
-  id: string;
-  status: "ready" | "busy" | "stopped" | "error";
-}
-
-/** Reads persisted Starter Kit Agents without granting AgentRelay permissions. */
-export interface StarterKitAgentLookup {
-  get(agentId: string): Promise<StarterKitAgent | null>;
-}
-
-export interface AgentManifestRegistry {
-  get(agentId: string): Promise<AgentManifest | null>;
-  list(): Promise<AgentManifest[]>;
-  findEligible(input: {
-    capability: string;
-    requiredPermissions?: AgentPermission[];
-  }): Promise<AgentManifest[]>;
-}
-
-export type AgentManifestRegistryErrorCode = "AGENT_NOT_FOUND" | "AGENT_NOT_RUNNABLE";
-
-export class AgentManifestRegistryError extends Error {
-  constructor(
-    readonly code: AgentManifestRegistryErrorCode,
-    readonly agentId: string,
-  ) {
-    super(`${code}: ${agentId}`);
-    this.name = "AgentManifestRegistryError";
-  }
-}
-
-/**
- * Links explicitly registered AgentRelay manifests to persisted Starter Kit Agents.
- * An Agent that exists in Starter Kit but has no manifest deliberately remains absent.
- */
-export class PersistedAgentManifestRegistry implements AgentManifestRegistry {
-  private readonly manifestsByAgentId = new Map<string, AgentManifest>();
-
-  constructor(
-    manifests: readonly AgentManifest[],
-    private readonly starterKitAgents: StarterKitAgentLookup,
-  ) {
-    for (const manifest of manifests) {
-      if (this.manifestsByAgentId.has(manifest.agentId)) {
-        throw new Error(`Duplicate AgentRelay manifest: ${manifest.agentId}`);
-      }
-      this.manifestsByAgentId.set(manifest.agentId, cloneManifest(manifest));
-    }
-  }
+export class AgentManifestRegistry {
+  constructor(private readonly agentService: Pick<AgentService, "getAgent" | "listAgents">, private readonly manifests: readonly AgentManifest[]) {}
 
   async get(agentId: string): Promise<AgentManifest | null> {
-    const manifest = this.manifestsByAgentId.get(agentId);
+    const manifest = this.manifests.find((item) => item.agentId === agentId);
     if (!manifest) return null;
-
-    const persistedAgent = await this.starterKitAgents.get(agentId);
-    if (!persistedAgent || persistedAgent.id !== agentId) {
-      throw new AgentManifestRegistryError("AGENT_NOT_FOUND", agentId);
-    }
-    if (!manifest.runnable || persistedAgent.status !== "ready") {
-      throw new AgentManifestRegistryError("AGENT_NOT_RUNNABLE", agentId);
-    }
-    return cloneManifest(manifest);
+    let agent;
+    try { agent = this.agentService.getAgent(agentId); } catch { throw new HttpError(409, `AGENT_NOT_FOUND: ${agentId}`); }
+    return cloneManifest({ ...manifest, runnable: agent.status === "ready" });
   }
 
   async list(): Promise<AgentManifest[]> {
-    const manifests = await Promise.all([...this.manifestsByAgentId.keys()].map((agentId) => this.get(agentId)));
-    return manifests.filter((manifest): manifest is AgentManifest => manifest !== null);
+    return Promise.all(this.manifests.map(async (manifest) => (await this.get(manifest.agentId))!));
   }
 
-  async findEligible(input: {
-    capability: string;
-    requiredPermissions?: AgentPermission[];
-  }): Promise<AgentManifest[]> {
-    const requiredPermissions = input.requiredPermissions ?? [];
-    const matches = [...this.manifestsByAgentId.values()].filter((manifest) =>
-      manifest.capabilities.includes(input.capability)
-      && requiredPermissions.every((permission) => manifest.permissions.includes(permission)),
-    );
-    const eligible: AgentManifest[] = [];
-    for (const manifest of matches) {
-      try {
-        const verifiedManifest = await this.get(manifest.agentId);
-        if (verifiedManifest) eligible.push(verifiedManifest);
-      } catch (error) {
-        if (!(error instanceof AgentManifestRegistryError)) throw error;
-        // Candidate manifests with an unavailable persisted Agent are not eligible.
-      }
-    }
-    return eligible;
+  async findEligible(input: { capability: string; requiredPermissions?: string[] }): Promise<AgentManifest[]> {
+    const registered = await this.list();
+    return registered.filter((manifest) => manifest.runnable && manifest.capabilities.includes(input.capability) && (input.requiredPermissions ?? []).every((permission) => manifest.permissions.includes(permission as never)));
+  }
+
+  async requireRunnable(agentId: string): Promise<AgentManifest> {
+    const manifest = await this.get(agentId);
+    if (!manifest) throw new HttpError(409, `AGENT_NOT_REGISTERED: ${agentId}`);
+    if (!manifest.runnable) throw new HttpError(409, `AGENT_NOT_RUNNABLE: ${agentId}`);
+    return cloneManifest(manifest);
   }
 }
 
+/** Never expose registry-owned nested policy arrays to callers. */
 function cloneManifest(manifest: AgentManifest): AgentManifest {
   return {
     ...manifest,
     capabilities: [...manifest.capabilities],
     permissions: [...manifest.permissions],
-    toolPolicy: {
-      ...manifest.toolPolicy,
-      allowedTools: [...manifest.toolPolicy.allowedTools],
-      resourceScopes: manifest.toolPolicy.resourceScopes.map((scope) => ({ ...scope, permissions: [...scope.permissions] })),
-    },
+    ...(manifest.toolPolicy ? {
+      toolPolicy: {
+        ...manifest.toolPolicy,
+        allowedTools: [...manifest.toolPolicy.allowedTools],
+        resourceScopes: manifest.toolPolicy.resourceScopes.map((scope) => ({ ...scope, permissions: [...scope.permissions] })),
+      },
+    } : {}),
   };
 }

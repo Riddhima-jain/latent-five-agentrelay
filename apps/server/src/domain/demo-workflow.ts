@@ -48,7 +48,7 @@ export const SALES_RECOVERY_AGENTS: AgentManifest[] = [
     capabilities: ["market_research"],
     permissions: ["read"],
     runnable: true,
-    toolPolicy: { agentId: "research-agent", allowedTools: ["resource.read"], resourceScopes: [{ pattern: "market/*", permissions: ["read"] }] },
+    toolPolicy: { allowedTools: ["resource.read"], resourceScopes: [{ pattern: "market/*", permissions: ["read"] }] },
   },
   {
     agentId: "finance-agent",
@@ -56,7 +56,7 @@ export const SALES_RECOVERY_AGENTS: AgentManifest[] = [
     capabilities: ["financial_analysis"],
     permissions: ["read"],
     runnable: true,
-    toolPolicy: { agentId: "finance-agent", allowedTools: ["resource.read"], resourceScopes: [{ pattern: "finance/*", permissions: ["read"] }] },
+    toolPolicy: { allowedTools: ["resource.read"], resourceScopes: [{ pattern: "finance/*", permissions: ["read"] }] },
   },
   {
     agentId: "strategy-agent",
@@ -64,7 +64,7 @@ export const SALES_RECOVERY_AGENTS: AgentManifest[] = [
     capabilities: ["strategy"],
     permissions: ["read"],
     runnable: true,
-    toolPolicy: { agentId: "strategy-agent", allowedTools: [], resourceScopes: [] },
+    toolPolicy: { allowedTools: [], resourceScopes: [] },
   },
   {
     agentId: "outreach-agent",
@@ -72,6 +72,6 @@ export const SALES_RECOVERY_AGENTS: AgentManifest[] = [
     capabilities: ["external_communication"],
     permissions: ["read", "external_write"],
     runnable: true,
-    toolPolicy: { agentId: "outreach-agent", allowedTools: ["resource.read"], resourceScopes: [{ pattern: "customer/*", permissions: ["read"] }] },
+    toolPolicy: { allowedTools: ["resource.read"], resourceScopes: [{ pattern: "customer/*", permissions: ["read"] }] },
   },
 ];
