@@ -5,7 +5,7 @@ import type { RelaySession, RelayTask } from "./types";
 const relaySessionStorageKey = "agentrelay.activeSessionId";
 
 const emptySession: RelaySession = {
-  id: "not-started", traceId: "not-started", title: "Workflow Overview", status: "running", startedAt: new Date().toISOString(),
+  id: "not-started", traceId: "not-started", title: "Workflow Overview", goal: "", status: "running", startedAt: new Date().toISOString(),
   tasks: [
     { id: "research", title: "Market Research", agentId: "research-agent", agentName: "Market Research Agent", status: "waiting", dependsOn: [], summary: "Starts when a workflow is created." },
     { id: "finance", title: "Financial Analysis", agentId: "finance-agent", agentName: "Financial Analysis Agent", status: "waiting", dependsOn: [], summary: "Starts when a workflow is created." },
@@ -22,6 +22,12 @@ const evidence = [
   ["Competitor Benchmark", "SimilarWeb", "Web", "web"],
   ["Financial Statements FY24", "Acme Corp", "XLSX", "sheet"],
   ["Earnings Call Transcript", "Acme Corp Q4 FY24", "PDF", "document"],
+] as const;
+
+const suggestedGoals = [
+  "Investigate a decline in product sales and recommend a response.",
+  "Review a proposed pricing change and assess its likely impact.",
+  "Prepare a customer outreach strategy using the available evidence.",
 ] as const;
 
 function TaskIcon({ id }: { id: string }) {
@@ -55,14 +61,12 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<RelaySession[]>([]);
   const [scenario, setScenario] = useState<"normal" | "timeout" | "denial">("normal");
+  const [goal, setGoal] = useState("");
+  const [showComposer, setShowComposer] = useState(true);
 
   useEffect(() => {
-    const savedId = window.localStorage.getItem(relaySessionStorageKey);
-    void api.listRelaySessions().then(async (history) => {
+    void api.listRelaySessions().then((history) => {
       setSessions(history.sessions);
-      const selected = savedId && history.sessions.some((item) => item.id === savedId) ? savedId : history.sessions[0]?.id;
-      if (selected) setSession((await api.relaySession(selected)).session);
-      else window.localStorage.removeItem(relaySessionStorageKey);
     }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, []);
 
@@ -80,10 +84,25 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
   const createWorkflow = async () => {
     setBusy(true); setError(null);
     try {
-      const result = await api.createRelaySession({ scenario });
+      const result = await api.createRelaySession({ goal: goal.trim(), scenario });
       setSession(result.session);
+      setShowComposer(false);
       setSessions((current) => [result.session, ...current.filter((item) => item.id !== result.session.id)]);
       window.localStorage.setItem(relaySessionStorageKey, result.session.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openWorkflow = async (id: string) => {
+    setBusy(true); setError(null);
+    try {
+      const result = await api.relaySession(id);
+      setSession(result.session);
+      setShowComposer(false);
+      window.localStorage.setItem(relaySessionStorageKey, id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -101,11 +120,26 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
 
   return (
     <div className="relay-page relay-reference-page">
+      {showComposer ? <>
+        <section className="workflow-start-shell" aria-labelledby="workflow-start-title">
+          <div className="workflow-start-copy"><span className="workflow-start-eyebrow">Agent fleet orchestration</span><h1 id="workflow-start-title">Start a new workflow</h1><p>Describe the business problem you want the agent fleet to investigate. AgentRelay will coordinate research, analysis, strategy, and protected outreach.</p></div>
+          {!runtimeReady && <div className="config-banner"><span>!</span><div><strong>Agent Runtime configuration required</strong><p>Configure Ark or Gemini and ensure Codex is available before starting a real workflow.</p></div></div>}
+          {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
+          <label className="workflow-goal-label" htmlFor="workflow-goal">What would you like the agent fleet to investigate?</label>
+          <textarea id="workflow-goal" className="workflow-goal-input" value={goal} maxLength={2000} rows={5} placeholder="Sales for our new product have dropped. Investigate why and recommend what we should do." onChange={(event) => setGoal(event.target.value)} />
+          <div className="workflow-goal-footer"><span>{goal.length.toLocaleString()} / 2,000</span><button className="button button-primary workflow-start-button" disabled={busy || !runtimeReady || !goal.trim()} onClick={createWorkflow}>{busy ? "Starting workflow…" : "Start AgentRelay Workflow →"}</button></div>
+          <div className="suggested-goals"><span>Try a suggestion</span><div>{suggestedGoals.map((suggestion) => <button key={suggestion} type="button" onClick={() => setGoal(suggestion)}>{suggestion}</button>)}</div></div>
+          <p className="workflow-scope-note"><strong>Demo scope:</strong> workflows are grounded in the committed sales-recovery fixtures so judges can reproduce the same evidence safely.</p>
+          <details className="scenario-controls"><summary>Demo scenario <span>Optional controlled behavior</span></summary><label htmlFor="workflow-scenario">Scenario</label><select id="workflow-scenario" value={scenario} onChange={(event) => setScenario(event.target.value as typeof scenario)}><option value="normal">Normal workflow</option><option value="timeout">Timeout and retry</option><option value="denial">Policy denial</option></select><p>These controls exercise real middleware paths; they do not replace agent execution with hard-coded results.</p></details>
+        </section>
+        <section className="workflow-history" aria-labelledby="workflow-history-title"><header><div><h2 id="workflow-history-title">Previous workflows</h2><p>Reopen a persisted session and continue from its latest state.</p></div><span>{sessions.length} {sessions.length === 1 ? "workflow" : "workflows"}</span></header>{sessions.length ? <div className="workflow-history-list">{sessions.map((item) => <button key={item.id} className="workflow-history-row" disabled={busy} onClick={() => void openWorkflow(item.id)}><span className={`history-status history-status-${item.status}`} aria-hidden="true"/><span className="history-goal"><strong>{item.goal || "Untitled workflow"}</strong><small>{item.id}</small></span><span className="history-meta"><strong>{item.status.replaceAll("_", " ")}</strong><small>{new Date(item.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></span><span className="history-open">Open →</span></button>)}</div> : <div className="workflow-history-empty"><strong>No workflows yet</strong><p>Your completed and in-progress sessions will appear here.</p></div>}</section>
+      </> : <>
       <header className="relay-hero reference-hero">
-        <div><h1>Workflow Overview</h1><div className="session-line">Session: <strong>{session.id === "not-started" ? "No workflow created" : session.id}</strong>{session.id !== "not-started" && <button aria-label="Copy session ID" onClick={() => void navigator.clipboard?.writeText(session.id)}>▢</button>}<span className={`active-badge active-badge-${session.status}`}>● {session.id === "not-started" ? "ready" : session.status.replaceAll("_", " ")}</span></div></div>
-        <dl className="session-metadata"><div><dt>Started</dt><dd>{new Date(session.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</dd></div><div><dt>Triggered by</dt><dd>Strategy Agent</dd></div><div><dt>Run mode</dt><dd>Semi-Autonomous</dd></div></dl>
-        <div className="workflow-header-actions"><select aria-label="Controlled scenario" value={scenario} onChange={(event) => setScenario(event.target.value as typeof scenario)}><option value="normal">Normal run</option><option value="timeout">Timeout scenario</option><option value="denial">Denial scenario</option></select>{sessions.length > 0 && <select aria-label="Open workflow session" value={session.id === "not-started" ? sessions[0]?.id : session.id} onChange={(event) => { const id = event.target.value; void api.relaySession(id).then(({ session: value }) => { setSession(value); window.localStorage.setItem(relaySessionStorageKey, id); }); }}>{sessions.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.status.replaceAll("_", " ")}</option>)}</select>}<button className="button button-primary" disabled={busy || !runtimeReady} onClick={createWorkflow}>{busy ? "Starting…" : "+ New Workflow"}</button></div>
+        <div><h1>Workflow Overview</h1><div className="session-line">Session: <strong>{session.id}</strong><button aria-label="Copy session ID" onClick={() => void navigator.clipboard?.writeText(session.id)}>▢</button><span className={`active-badge active-badge-${session.status}`}>● {session.status.replaceAll("_", " ")}</span></div></div>
+        <dl className="session-metadata"><div><dt>Started</dt><dd>{new Date(session.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</dd></div><div><dt>Triggered by</dt><dd>User request</dd></div><div><dt>Run mode</dt><dd>Semi-Autonomous</dd></div></dl>
+        <div className="workflow-header-actions"><button className="button button-outline" onClick={() => { setGoal(""); setScenario("normal"); setShowComposer(true); }}>← All workflows</button><button className="button button-primary" onClick={() => { setGoal(""); setScenario("normal"); setShowComposer(true); }}>+ New Workflow</button></div>
       </header>
+      <p className="workflow-active-goal">{session.goal}</p>
       {!runtimeReady && <div className="config-banner"><span>!</span><div><strong>Agent Runtime configuration required</strong><p>Configure Ark or Gemini and ensure Codex is available before starting a real workflow.</p></div></div>}
       {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
       <section className="workflow-card-grid">{session.tasks.map((task) => <WorkflowCard key={task.id} task={task} />)}</section>
@@ -125,6 +159,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
           <button className="panel-link">View full trace →</button>
         </article>
       </section>
+      </>}
     </div>
   );
 }

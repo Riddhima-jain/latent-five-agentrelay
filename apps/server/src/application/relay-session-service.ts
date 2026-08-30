@@ -47,6 +47,7 @@ export interface RelaySessionView {
   id: string;
   traceId: string;
   title: string;
+  goal: string;
   status: "running" | "awaiting_approval" | "completed" | "failed" | "degraded";
   startedAt: string;
   tasks: RelayTaskView[];
@@ -189,6 +190,7 @@ class RelaySessionAggregate {
       id: this.sessionId,
       traceId: `trace-${this.sessionId}`,
       title: "Workflow Overview",
+      goal: "Analyze the controlled sales-recovery evidence, recommend a strategy, and draft safe customer outreach.",
       status: this.outcome === "pending" ? "awaiting_approval" : this.outcome === "approved" ? "completed" : "degraded",
       startedAt: this.startedAt,
       tasks: SALES_RECOVERY_TASKS.map((definition, index) => {
