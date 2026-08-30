@@ -122,8 +122,8 @@ export class RelayWorkflowService implements RelaySessionReader {
       }
       if (decision === "deny") {
         await this.store.saveApproval({ ...approval, status: "denied", deniedAt: this.now() });
-        await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
         await this.trace(session, "approval.denied", { taskId: action.taskId, agentId: action.producerAgentId });
+        await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
         return this.getSession(session.id);
       }
       await this.store.saveApproval({ ...approval, status: "approved", approvedAt: this.now() });
@@ -149,8 +149,8 @@ export class RelayWorkflowService implements RelaySessionReader {
       });
       const outcome = await execution.run(approved, "REQUIRE_APPROVAL");
       if (outcome.terminal) {
-        await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
         await this.trace(session, "session.failed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reason: outcome.reason ?? "Protected action failed" } });
+        await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
         throw new HttpError(502, "Protected action failed; approval remains recorded");
       }
       if (outcome.result.status !== "succeeded") {
@@ -173,8 +173,8 @@ export class RelayWorkflowService implements RelaySessionReader {
       await this.applyPolicy(sessionId, scenario);
     } catch (error) {
       const session = await this.requireSession(sessionId);
-      await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
       await this.trace(session, "session.failed", { metadata: { reason: error instanceof Error ? error.message : String(error) } });
+      await this.store.save({ ...session, status: "failed", updatedAt: this.now() });
     }
   }
 
@@ -187,18 +187,20 @@ export class RelayWorkflowService implements RelaySessionReader {
     const action = actions[0]!;
     const agent = SALES_RECOVERY_AGENTS.find((candidate) => candidate.agentId === action.producerAgentId);
     const policy = decideAutomation(action, evidence, { agentId: action.producerAgentId, registered: agent !== undefined, permissions: agent?.permissions ?? [] });
+    // Persist the approval record and trace events before the status a poller
+    // keys on, so an observer that sees the new status also sees the evidence.
     if (policy.decision === "REQUIRE_APPROVAL") {
       const approval = { id: `approval-${action.id}`, actionId: action.id, payloadHash: payloadHashFor(action), sessionId, status: "pending" as const, createdAt: this.now() };
       await this.store.saveApproval(approval);
-      await this.store.save({ ...session, status: "awaiting_approval", updatedAt: this.now() });
       await this.trace(session, "policy.approval_required", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reasons: policy.reasons } });
       await this.trace(session, "approval.requested", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { approvalId: approval.id } });
+      await this.store.save({ ...session, status: "awaiting_approval", updatedAt: this.now() });
     } else if (policy.decision === "DENY") {
-      await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
       await this.trace(session, "policy.denied", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reasons: policy.reasons } });
+      await this.store.save({ ...session, status: "degraded", updatedAt: this.now() });
     } else {
-      await this.store.save({ ...session, status: "recommend_only", updatedAt: this.now() });
       await this.trace(session, "policy.recommend_only", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reasons: policy.reasons } });
+      await this.store.save({ ...session, status: "recommend_only", updatedAt: this.now() });
     }
   }
 

@@ -4,6 +4,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentRunner, RunnerRequest } from "../types.js";
 import { InMemoryExecutionStore } from "../adapters/in-memory-execution-store.js";
+import { MockActionExecutor } from "../adapters/mock-action-executor.js";
+import { MockProtectedEmailService } from "../adapters/mock-protected-email-service.js";
+import type { ExternalActionExecutor } from "../domain/ports.js";
 import { MockEmailExecutor } from "./email-executor.js";
 import { RelayJsonStore } from "./relay-store.js";
 import { RelayWorkflowService } from "./relay-workflow-service.js";
@@ -18,11 +21,11 @@ class WorkflowRunner implements AgentRunner {
   async isAvailable() { return true; }
 }
 
-async function createHarness() {
+async function createHarness(executor?: ExternalActionExecutor) {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentrelay-workflow-"));
   const store = new RelayJsonStore(path.join(root, "relay.json"));
   const executionStore = new InMemoryExecutionStore();
-  const service = new RelayWorkflowService(store, new WorkflowRunner(), new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), executionStore);
+  const service = new RelayWorkflowService(store, new WorkflowRunner(), executor ?? new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), executionStore);
   await service.initialize();
   return { root, store, service, executionStore };
 }
@@ -85,6 +88,25 @@ describe("RelayWorkflowService", () => {
     const failed = await waitFor(service, created.id, ["failed"]);
     expect(failed.trace.filter((event) => event.type === "retry.scheduled")).not.toHaveLength(0);
     expect(failed.tasks.find((task) => task.id === "research")?.status).toBe("failed");
+  });
+
+  it("fails the session on a terminal protected-execution failure and keeps it out of completed (U11/U13)", async () => {
+    const failingService = new MockProtectedEmailService({ expectedToken: "harness-executor-token-000000000000" });
+    failingService.failNextSends(99);
+    const failingExecutor = new MockActionExecutor({ token: "harness-executor-token-000000000000", service: failingService });
+    const { service, store } = await createHarness(failingExecutor);
+    const created = await service.createSession({ scenario: "normal" });
+    const pending = await waitFor(service, created.id, ["awaiting_approval"]);
+
+    await expect(service.decideApproval(pending.approval!.id, "approve")).rejects.toMatchObject({ statusCode: 502 });
+
+    const failed = await service.getSession(created.id);
+    expect(failed.status).toBe("failed");
+    const types = failed.trace.map((event) => event.type);
+    expect(types).toContain("action.failed");
+    expect(types).toContain("session.failed");
+    expect(failingService.sentCount).toBe(0);
+    expect(await store.listReceipts(created.id)).toHaveLength(0);
   });
 
   it("runs the real coordinator output through the prohibited-action policy", async () => {
