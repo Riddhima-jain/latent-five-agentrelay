@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import type { RelaySession, RelayTask } from "./types";
+import type { RelayAgentManifestView, RelayRecommendationView, RelayResourceAccessEvent, RelaySession, RelayTask } from "./types";
 
 const relaySessionStorageKey = "agentrelay.activeSessionId";
 
@@ -53,6 +53,19 @@ function WorkflowCard({ task }: { task: RelayTask }) {
       </dl>
     </article>
   );
+}
+
+function PermissionSummary({ manifest }: { manifest: RelayAgentManifestView }) {
+  return <article className="permission-summary"><header><span className={`permission-agent-state ${manifest.runnable ? "permission-agent-ready" : "permission-agent-unavailable"}`} /><div><strong>{manifest.name}</strong><small>Starter Kit Agent · {manifest.agentId}</small></div></header><dl><div><dt>Capabilities</dt><dd>{manifest.capabilities.join(", ") || "None registered"}</dd></div><div><dt>Allowed tools</dt><dd>{manifest.allowedTools.join(", ") || "No protected tools"}</dd></div><div><dt>Resource scopes</dt><dd>{manifest.resourceScopes.join(", ") || "No raw resource access"}</dd></div></dl></article>;
+}
+
+function ResourceAccessRow({ event }: { event: RelayResourceAccessEvent }) {
+  const allowed = event.decision === "ALLOW";
+  return <div className={`resource-access-row resource-access-${event.decision.toLowerCase()}`}><span className="resource-decision-icon" aria-label={allowed ? "Allowed" : "Denied"}>{allowed ? "✓" : "×"}</span><div className="resource-access-agent"><strong>{event.agentName}</strong><small>{event.agentId} · {event.taskId}</small></div><div className="resource-access-target"><code>{event.tool}</code><strong>{event.resource}</strong></div><div className="resource-access-result"><strong>{allowed ? "Allowed" : "Denied"}</strong><small>{event.reason.replaceAll("_", " ")}</small></div><time>{new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time></div>;
+}
+
+function RecommendationCard({ recommendation }: { recommendation: RelayRecommendationView }) {
+  return <article className="recommendation-card"><header><span>Recommendation only</span><code>{recommendation.actionType}</code></header><p>{recommendation.summary}</p><ul>{recommendation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul><footer><span>{recommendation.supportingEvidenceIds.length} supporting evidence {recommendation.supportingEvidenceIds.length === 1 ? "record" : "records"}</span><strong>Execution blocked</strong></footer></article>;
 }
 
 export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: boolean }) {
@@ -143,6 +156,12 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
       {!runtimeReady && <div className="config-banner"><span>!</span><div><strong>Agent Runtime configuration required</strong><p>Configure Ark or Gemini and ensure Codex is available before starting a real workflow.</p></div></div>}
       {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
       <section className="workflow-card-grid">{session.tasks.map((task) => <WorkflowCard key={task.id} task={task} />)}</section>
+      <section className="resource-governance-panel" aria-labelledby="resource-access-title">
+        <header><div><span className="resource-panel-eyebrow">Deterministic control plane</span><h2 id="resource-access-title">Tool &amp; Resource Access</h2><p>Run-scoped permissions govern which protected resources each Agent may read.</p></div><span className="resource-event-count">{session.resourceAccessEvents?.length ?? 0} access events</span></header>
+        {session.agentManifests?.length ? <div className="permission-summary-grid">{session.agentManifests.map((manifest) => <PermissionSummary key={manifest.agentId} manifest={manifest} />)}</div> : <div className="resource-contract-empty"><span>◇</span><div><strong>Waiting for registered Agent permissions</strong><p>Permission summaries will appear when the backend supplies real Starter Kit Agent manifests. No access grants or tokens are exposed to the browser.</p></div></div>}
+        {session.resourceAccessEvents?.length ? <div className="resource-access-list">{[...session.resourceAccessEvents].reverse().map((event) => <ResourceAccessRow key={event.id} event={event} />)}</div> : <div className="resource-events-empty"><strong>No protected-resource access recorded</strong><p>Allowed and denied gateway decisions will appear here when this workflow requests a protected resource.</p></div>}
+      </section>
+      <section className="recommendation-section" aria-labelledby="recommendations-title"><header><div><span className="resource-panel-eyebrow">Selective automation</span><h2 id="recommendations-title">Recommendations</h2></div><span>{session.recommendations?.length ?? 0} decisions</span></header>{session.recommendations?.length ? <div className="recommendation-grid">{session.recommendations.map((recommendation) => <RecommendationCard key={recommendation.id} recommendation={recommendation} />)}</div> : <div className="recommendation-empty"><strong>No recommendation-only decisions</strong><p>High-impact or evidence-conflicted proposals will remain visible here without being executed.</p></div>}</section>
       <section className="relay-detail-grid">
         <article className="reference-panel evidence-panel">
           <header><h2>Evidence</h2><span className="soft-badge">{session.evidence?.length ?? evidence.length} records</span></header>
