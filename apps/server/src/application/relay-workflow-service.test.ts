@@ -26,7 +26,9 @@ async function createHarness() {
 }
 
 async function waitFor(service: RelayWorkflowService, id: string, statuses: string[]) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // The workflow runs asynchronously and competes with the rest of the suite.
+  // Allow enough headroom for parallel Vitest workers on slower machines.
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
     const session = await service.getSession(id);
     if (statuses.includes(session.status)) return session;
     await new Promise((resolve) => setTimeout(resolve, 5));
