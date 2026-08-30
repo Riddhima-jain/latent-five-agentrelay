@@ -82,6 +82,20 @@ describe("RelayWorkflowService", () => {
     expect((await restarted.getSession(created.id)).status).toBe("awaiting_approval");
   });
 
+  it("reconciles an approved-but-unfinished session on restart from the receipt ledger", async () => {
+    const { root, store, service } = await createHarness();
+    const created = await service.createSession();
+    const pending = await waitFor(service, created.id, ["awaiting_approval"]);
+    // Simulate a crash right after the user approved: the approval is approved,
+    // the session status was never advanced past awaiting_approval, no receipt.
+    const approval = await store.getApproval(pending.approval!.id);
+    await store.saveApproval({ ...approval!, status: "approved", approvedAt: new Date().toISOString() });
+
+    const restarted = new RelayWorkflowService(new RelayJsonStore(path.join(root, "relay.json")), new WorkflowRunner(), new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"));
+    await restarted.initialize();
+    expect((await restarted.getSession(created.id)).status).toBe("failed");
+  });
+
   it("records real coordinator retries and failure for the controlled timeout", async () => {
     const { service } = await createHarness();
     const created = await service.createSession({ scenario: "timeout" });

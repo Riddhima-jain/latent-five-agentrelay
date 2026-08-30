@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ApprovedAction } from "../domain/action.js";
 import { payloadHashFor } from "./approval-service.js";
-import { MockEmailExecutor, ResendEmailExecutor } from "./email-executor.js";
+import { MockEmailExecutor, ResendEmailExecutor, createEmailExecutor } from "./email-executor.js";
 import { RelayJsonStore } from "./relay-store.js";
 
 async function harness() {
@@ -25,6 +25,17 @@ describe("email executors", () => {
     const second = await executor.execute(action);
     expect(second.externalReference).toBe(first.externalReference);
     expect(await store.listReceipts("s1")).toHaveLength(1);
+  });
+
+  it("falls back to an ephemeral token when the configured token is a replace- placeholder", async () => {
+    const { store, action } = await harness();
+    // The shipped .env.example value; MockActionExecutor rejects the `replace-` prefix,
+    // so createEmailExecutor must not pin it — a fresh clone still needs to boot.
+    const executor = createEmailExecutor(
+      { provider: "mock", executorToken: "replace-with-a-separate-long-random-executor-token", resendApiKey: "", resendFrom: "", resendToOverride: "" },
+      store,
+    );
+    expect((await executor.execute(action)).status).toBe("succeeded");
   });
 
   it("rejects an action modified after approval", async () => {

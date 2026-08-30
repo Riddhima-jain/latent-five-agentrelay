@@ -56,9 +56,13 @@ export class MockEmailExecutor extends BaseEmailExecutor {
     now?: () => string,
   ) {
     super(store, now);
-    const token = options.token && options.token.length >= 24
+    // A pinned token must be a real value; an unset or `replace-` placeholder
+    // falls back to a per-boot ephemeral token (matches MockActionExecutor's and
+    // config.ts's own placeholder rejection), so a fresh clone still boots.
+    const pinned = options.token && options.token.length >= 24 && !options.token.startsWith("replace-")
       ? options.token
-      : `mock-executor-${randomUUID()}-${randomUUID()}`;
+      : undefined;
+    const token = pinned ?? `mock-executor-${randomUUID()}-${randomUUID()}`;
     const service = options.service ?? new MockProtectedEmailService({ expectedToken: token });
     this.protectedExecutor = new MockActionExecutor({ token, service });
   }
