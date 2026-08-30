@@ -64,4 +64,11 @@ describe("RelayApprovalVerifier", () => {
     const tampered: ApprovedAction = { ...action, payload: { ...(action.payload as object), recipient: "attacker@example.com" } };
     expect(await verifier.isSatisfied(tampered)).toEqual({ ok: false, reason: "HASH_MISMATCH" });
   });
+
+  it("reports HASH_MISMATCH when the carried action.payloadHash is stale but the stored approval hash is current", async () => {
+    const { action, verifier, saveApproval } = await harness();
+    await saveApproval({ status: "approved" });
+    const stale: ApprovedAction = { ...action, payloadHash: "0".repeat(64) };
+    expect(await verifier.isSatisfied(stale)).toEqual({ ok: false, reason: "HASH_MISMATCH" });
+  });
 });

@@ -53,4 +53,25 @@ describe("email executors", () => {
     expect(JSON.parse(String(options?.body)).to).toEqual(["team@example.com"]);
     expect(new Headers(options?.headers).get("Idempotency-Key")).toBe(action.idempotencyKey);
   });
+
+  it("sends a stable Idempotency-Key across a retry and delivers exactly once", async () => {
+    const { store, action } = await harness();
+    let call = 0;
+    const request = vi.fn(async () => {
+      call += 1;
+      return call === 1
+        ? new Response("upstream 500", { status: 500 })
+        : new Response(JSON.stringify({ id: "email_retry_ok" }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const config = { provider: "resend" as const, executorToken: "", resendApiKey: "k", resendFrom: "AgentRelay <demo@example.com>", resendToOverride: "team@example.com" };
+    const executor = new ResendEmailExecutor(store, config, () => "2026-01-01T00:00:00Z", request);
+
+    await expect(executor.execute(action)).rejects.toThrow(/Resend delivery failed/);
+    expect((await executor.execute(action)).externalReference).toBe("email_retry_ok");
+
+    expect(request).toHaveBeenCalledTimes(2);
+    const keys = request.mock.calls.map(([, options]) => new Headers(options?.headers).get("Idempotency-Key"));
+    expect(keys).toEqual([action.idempotencyKey, action.idempotencyKey]);
+    expect(await store.listReceipts("s1")).toHaveLength(1);
+  });
 });

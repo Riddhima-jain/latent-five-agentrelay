@@ -6,8 +6,9 @@ import { createRunner } from "./runner-factory.js";
 import { JsonStore } from "./store.js";
 import { WorkspaceManager } from "./workspace.js";
 import { RelayJsonStore } from "./application/relay-store.js";
-import { createEmailExecutor } from "./application/email-executor.js";
+import { createEmailExecutor, resolveMockExecutorToken } from "./application/email-executor.js";
 import { JsonExecutionStore } from "./adapters/json-execution-store.js";
+import { MockProtectedEmailService } from "./adapters/mock-protected-email-service.js";
 import { RelayWorkflowService } from "./application/relay-workflow-service.js";
 
 const config = loadConfig();
@@ -20,13 +21,19 @@ const service = new AgentService(config, store, workspaces, runner);
 await service.initialize();
 
 const relayStore = new RelayJsonStore(path.join(config.dataDirectory, "agentrelay.json"));
+// The protected-service credential is resolved once here so its effective value
+// (configured or per-boot ephemeral) can be added to the trace redaction secrets.
+const executorToken = resolveMockExecutorToken(config.executorToken);
+const mockProtectedEmailService = config.emailExecutor === "mock"
+  ? new MockProtectedEmailService({ expectedToken: executorToken })
+  : undefined;
 const emailExecutor = createEmailExecutor({
   provider: config.emailExecutor,
-  executorToken: config.executorToken,
+  executorToken,
   resendApiKey: config.resendApiKey,
   resendFrom: config.resendFrom,
   resendToOverride: config.resendToOverride,
-}, relayStore);
+}, relayStore, mockProtectedEmailService);
 const executionStore = new JsonExecutionStore(path.join(config.dataDirectory, "agentrelay-executions.json"));
 await executionStore.initialize();
 const relayService = new RelayWorkflowService(
@@ -39,7 +46,7 @@ const relayService = new RelayWorkflowService(
   undefined,
   async () => isModelConfigured(config) && await runner.isAvailable(),
   executionStore,
-  [config.executorToken, config.resendApiKey].filter(Boolean),
+  [executorToken, config.resendApiKey].filter(Boolean),
 );
 await relayService.initialize();
 

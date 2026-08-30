@@ -21,11 +21,11 @@ class WorkflowRunner implements AgentRunner {
   async isAvailable() { return true; }
 }
 
-async function createHarness(executor?: ExternalActionExecutor) {
+async function createHarness(executor?: ExternalActionExecutor, secrets: string[] = []) {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentrelay-workflow-"));
   const store = new RelayJsonStore(path.join(root, "relay.json"));
   const executionStore = new InMemoryExecutionStore();
-  const service = new RelayWorkflowService(store, new WorkflowRunner(), executor ?? new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), executionStore);
+  const service = new RelayWorkflowService(store, new WorkflowRunner(), executor ?? new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), executionStore, secrets);
   await service.initialize();
   return { root, store, service, executionStore };
 }
@@ -69,6 +69,46 @@ describe("RelayWorkflowService", () => {
     const ledgerKey = `${created.id}|${pending.approval!.actionId}|${pending.approval!.actionHash}`;
     const record = await executionStore.get(ledgerKey);
     expect(record?.status).toBe("succeeded");
+  });
+
+  it("keeps the executor credential and the email body out of every persisted trace event and ledger record", async () => {
+    const secret = "executor-token-000000000000-abcdef";
+    const { service, store, executionStore } = await createHarness(undefined, [secret]);
+    const created = await service.createSession({ scenario: "normal" });
+    const pending = await waitFor(service, created.id, ["awaiting_approval"]);
+    await service.decideApproval(pending.approval!.id, "approve");
+
+    const traceEvents = await store.listTrace(created.id);
+    const traceBlob = JSON.stringify(traceEvents);
+    // The credential and the email body never reach the trace store; the
+    // executor-boundary events carry a redacted target and a length summary only.
+    expect(traceBlob).not.toContain(secret);
+    expect(traceBlob).not.toContain("Hello from AgentRelay");
+    const boundaryEvents = traceEvents.filter((event) => event.type === "action.execution_started" || event.type === "action.executed");
+    expect(boundaryEvents.length).toBeGreaterThan(0);
+    for (const event of boundaryEvents) {
+      expect(event.metadata?.target).toBe("[REDACTED]");
+      expect(String(event.metadata?.payloadSummary)).toMatch(/^SEND_EMAIL, \d+ chars$/);
+    }
+
+    const ledgerKey = `${created.id}|${pending.approval!.actionId}|${pending.approval!.actionHash}`;
+    const ledgerBlob = JSON.stringify(await executionStore.get(ledgerKey));
+    expect(ledgerBlob).not.toContain(secret);
+    expect(ledgerBlob).not.toContain("Hello from AgentRelay");
+    expect(ledgerBlob).not.toContain("customer@example.com");
+  });
+
+  it("rejects a re-approval while an execution claim is still open (409, no send)", async () => {
+    const seenService = new MockProtectedEmailService({ expectedToken: "harness-executor-token-000000000000" });
+    const executor = new MockActionExecutor({ token: "harness-executor-token-000000000000", service: seenService });
+    const { service, executionStore } = await createHarness(executor);
+    const created = await service.createSession({ scenario: "normal" });
+    const pending = await waitFor(service, created.id, ["awaiting_approval"]);
+    const ledgerKey = `${created.id}|${pending.approval!.actionId}|${pending.approval!.actionHash}`;
+    await executionStore.claim({ idempotencyKey: ledgerKey, sessionId: created.id, actionId: pending.approval!.actionId, payloadHash: pending.approval!.actionHash });
+
+    await expect(service.decideApproval(pending.approval!.id, "approve")).rejects.toMatchObject({ statusCode: 409 });
+    expect(seenService.sentCount).toBe(0);
   });
 
   it("persists an approval-ready session across service restart", async () => {

@@ -16,6 +16,18 @@ export interface EmailExecutorConfig {
   resendToOverride: string;
 }
 
+/**
+ * The effective mock protected-service credential: the configured value when it
+ * is a real 24+ char token, otherwise a per-boot ephemeral one. The Agent
+ * Runtime never receives either; callers add the return value to the trace
+ * redaction secrets so it can never surface in a persisted trace or ledger.
+ */
+export function resolveMockExecutorToken(configured: string): string {
+  return configured && configured.length >= 24 && !configured.startsWith("replace-")
+    ? configured
+    : `mock-executor-${randomUUID()}-${randomUUID()}`;
+}
+
 abstract class BaseEmailExecutor implements ExternalActionExecutor {
   constructor(protected readonly store: RelayJsonStore, protected readonly now: () => string = () => new Date().toISOString()) {}
 
@@ -56,13 +68,7 @@ export class MockEmailExecutor extends BaseEmailExecutor {
     now?: () => string,
   ) {
     super(store, now);
-    // A pinned token must be a real value; an unset or `replace-` placeholder
-    // falls back to a per-boot ephemeral token (matches MockActionExecutor's and
-    // config.ts's own placeholder rejection), so a fresh clone still boots.
-    const pinned = options.token && options.token.length >= 24 && !options.token.startsWith("replace-")
-      ? options.token
-      : undefined;
-    const token = pinned ?? `mock-executor-${randomUUID()}-${randomUUID()}`;
+    const token = resolveMockExecutorToken(options.token ?? "");
     const service = options.service ?? new MockProtectedEmailService({ expectedToken: token });
     this.protectedExecutor = new MockActionExecutor({ token, service });
   }
@@ -92,8 +98,12 @@ export class ResendEmailExecutor extends BaseEmailExecutor {
   }
 }
 
-export function createEmailExecutor(config: EmailExecutorConfig, store: RelayJsonStore): ExternalActionExecutor {
+export function createEmailExecutor(
+  config: EmailExecutorConfig,
+  store: RelayJsonStore,
+  mockService?: MockProtectedEmailService,
+): ExternalActionExecutor {
   return config.provider === "resend"
     ? new ResendEmailExecutor(store, config)
-    : new MockEmailExecutor(store, { token: config.executorToken || undefined });
+    : new MockEmailExecutor(store, { token: config.executorToken || undefined, service: mockService });
 }
