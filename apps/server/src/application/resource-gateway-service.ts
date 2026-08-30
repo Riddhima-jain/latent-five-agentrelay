@@ -14,6 +14,19 @@ export interface ResourceGatewayService {
   readResource(input: { grantId: string; resource: string }): Promise<ResourceReadResult>;
 }
 
+export interface ResourceAccessAuditSink {
+  record(event: {
+    type: "tool.access.requested" | "tool.access.allowed" | "tool.access.denied";
+    grantId: string;
+    sessionId?: string;
+    taskId?: string;
+    agentId?: string;
+    resource: string;
+    decision?: "ALLOW" | "DENY";
+    reason?: ToolAccessDecision["reason"];
+  }): Promise<void>;
+}
+
 export class ResourceAccessError extends Error {
   constructor(readonly reason: Extract<ToolAccessDecision, { decision: "DENY" }> ["reason"]) {
     super(`RESOURCE_ACCESS_DENIED: ${reason}`);
@@ -27,17 +40,31 @@ export class ProtectedResourceGatewayService implements ResourceGatewayService {
     private readonly policy: ToolPolicyService,
     private readonly resources: ProtectedResourceStore,
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly audit?: ResourceAccessAuditSink,
   ) {}
 
   async readResource(input: { grantId: string; resource: string }): Promise<ResourceReadResult> {
     const grant = await this.grants.getGrant(input.grantId);
-    if (!grant) throw new ResourceAccessError("INVALID_GRANT");
+    if (!grant) {
+      await this.audit?.record({ type: "tool.access.denied", grantId: input.grantId, resource: input.resource, decision: "DENY", reason: "INVALID_GRANT" });
+      throw new ResourceAccessError("INVALID_GRANT");
+    }
+    const auditBase = { grantId: input.grantId, sessionId: grant.sessionId, taskId: grant.taskId, agentId: grant.agentId, resource: input.resource };
+    await this.audit?.record({ type: "tool.access.requested", ...auditBase });
     let resource: string;
-    try { resource = normalizeLogicalResource(input.resource); } catch { throw new ResourceAccessError("RESOURCE_OUT_OF_SCOPE"); }
+    try { resource = normalizeLogicalResource(input.resource); } catch {
+      await this.audit?.record({ type: "tool.access.denied", ...auditBase, decision: "DENY", reason: "RESOURCE_OUT_OF_SCOPE" });
+      throw new ResourceAccessError("RESOURCE_OUT_OF_SCOPE");
+    }
     const decision = this.policy.evaluate(grant, {
       requestId: randomUUID(), grantId: input.grantId, tool: "resource.read", resource, operation: "read", timestamp: this.now(),
     });
-    if (decision.decision === "DENY") throw new ResourceAccessError(decision.reason);
-    return { ...(await this.resources.read(resource)), resource };
+    if (decision.decision === "DENY") {
+      await this.audit?.record({ type: "tool.access.denied", ...auditBase, resource, decision: "DENY", reason: decision.reason });
+      throw new ResourceAccessError(decision.reason);
+    }
+    const result = { ...(await this.resources.read(resource)), resource };
+    await this.audit?.record({ type: "tool.access.allowed", ...auditBase, resource, decision: "ALLOW", reason: decision.reason });
+    return result;
   }
 }

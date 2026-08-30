@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import type { AgentService } from "./agent-service.js";
+import { ResourceAccessError, type ResourceGatewayService } from "./application/resource-gateway-service.js";
 
 const service = {
   listAgents: () => [],
@@ -117,6 +118,29 @@ describe("HTTP boundary", () => {
     expect(invalid.statusCode).toBe(400);
     const emptyGoal = await app.inject({ method: "POST", url: "/api/relay/sessions", payload: { goal: "   " } });
     expect(emptyGoal.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("serves protected resources only through an opaque grant header", async () => {
+    const gateway: ResourceGatewayService = {
+      async readResource({ grantId, resource }) {
+        if (grantId !== "opaque-grant") throw new ResourceAccessError("INVALID_GRANT");
+        if (resource !== "market/market-report.json") throw new ResourceAccessError("RESOURCE_OUT_OF_SCOPE");
+        return { resource, contentType: "application/json", content: "{\"product\":\"Nova\"}" };
+      },
+    };
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), service, undefined, gateway);
+    const denied = await app.inject({ method: "GET", url: "/api/middleware/resources/market%2Fmarket-report.json" });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toEqual({ error: "RESOURCE_ACCESS_DENIED", reason: "INVALID_GRANT" });
+    const allowed = await app.inject({
+      method: "GET",
+      url: "/api/middleware/resources/market%2Fmarket-report.json",
+      headers: { "x-agentrelay-grant": "opaque-grant" },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.headers["content-type"]).toContain("application/json");
+    expect(allowed.json()).toEqual({ product: "Nova" });
     await app.close();
   });
 });

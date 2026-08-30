@@ -117,6 +117,7 @@ export class Coordinator {
       const grant = this.ports.accessGrantService
         ? await this.ports.accessGrantService.issueGrant({ sessionId: running.sessionId, taskId: running.id, agent: manifest })
         : undefined;
+      if (grant) await this.trace("grant.issued", { taskId: task.id, agentId: route.agentId });
       const context = await this.buildContext(running, grant);
       await this.trace("agent.invoked", { taskId: task.id, agentId: route.agentId });
       const result = await this.ports.agentExecutor.execute(route.agentId, running, context);

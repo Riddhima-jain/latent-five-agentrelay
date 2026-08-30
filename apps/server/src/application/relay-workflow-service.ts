@@ -17,6 +17,7 @@ import { idempotencyKeyFor } from "./email-executor.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
 import type { CreateRelaySessionInput, RelayApprovalView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
 import { RelayJsonStore } from "./relay-store.js";
+import type { AccessGrantService } from "./access-grant-service.js";
 
 const defaultGoal = "Analyze the controlled sales-recovery evidence, recommend a strategy, and draft safe customer outreach.";
 
@@ -34,6 +35,7 @@ export class RelayWorkflowService implements RelaySessionReader {
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly createId: () => string = () => randomUUID(),
     private readonly runtimeAvailable: () => Promise<boolean> = () => Promise.resolve(true),
+    private readonly accessGrantService?: AccessGrantService,
   ) {
     this.adapter = new CodexAgentAdapter(runner, SALES_RECOVERY_AGENTS.map((agent) => ({
       agentId: agent.agentId,
@@ -67,7 +69,14 @@ export class RelayWorkflowService implements RelaySessionReader {
     const executor = new RecordingAgentExecutor(this.adapter, this.store, scenario, this.now);
     const coordinator = new Coordinator(
       SALES_RECOVERY_TASKS, SALES_RECOVERY_AGENTS,
-      { agentExecutor: executor, sessionStore: this.store, taskStore: this.store.taskStore, evidenceStore: this.store.evidenceStore, traceSink: this.store },
+      {
+        agentExecutor: executor,
+        sessionStore: this.store,
+        taskStore: this.store.taskStore,
+        evidenceStore: this.store.evidenceStore,
+        traceSink: this.store,
+        ...(this.accessGrantService ? { accessGrantService: this.accessGrantService } : {}),
+      },
       this.now, undefined, resourcesForTask,
     );
     const started = await coordinator.start(session);
