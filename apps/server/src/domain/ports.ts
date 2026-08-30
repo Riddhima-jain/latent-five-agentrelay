@@ -11,6 +11,11 @@ export interface ExecutionContext {
   constraints: string[];
   allowedResources: string[];
   dependencyEvidence: EvidenceRecord[];
+  /** Logical protected-resource handles only; no raw paths or grant token are exposed. */
+  resourceAccess?: {
+    gatewayBaseUrl: string;
+    allowedResourceHandles: string[];
+  };
 }
 
 export interface AgentExecutor {

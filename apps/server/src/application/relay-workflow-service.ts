@@ -12,7 +12,6 @@ import type { AgentRunner } from "../types.js";
 import { payloadHashFor } from "./approval-service.js";
 import { decideAutomation } from "./automation-decision-service.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
-import { LocalControlledFixtureProvider } from "./controlled-fixtures.js";
 import { Coordinator } from "./coordinator.js";
 import { idempotencyKeyFor } from "./email-executor.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
@@ -31,7 +30,7 @@ export class RelayWorkflowService implements RelaySessionReader {
     runner: AgentRunner,
     private readonly actionExecutor: ExternalActionExecutor,
     private readonly workspaceRootPath: string,
-    fixtureRoot: string,
+    _fixtureRoot: string,
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly createId: () => string = () => randomUUID(),
     private readonly runtimeAvailable: () => Promise<boolean> = () => Promise.resolve(true),
@@ -39,7 +38,7 @@ export class RelayWorkflowService implements RelaySessionReader {
     this.adapter = new CodexAgentAdapter(runner, SALES_RECOVERY_AGENTS.map((agent) => ({
       agentId: agent.agentId,
       workspacePath: path.join(this.workspaceRootPath, ".agentrelay", agent.agentId),
-    })), new LocalControlledFixtureProvider(fixtureRoot));
+    })));
   }
 
   async initialize(): Promise<void> {
@@ -219,9 +218,9 @@ export class RelayWorkflowService implements RelaySessionReader {
 }
 
 function resourcesForTask(task: AgentTask): readonly string[] {
-  if (task.id === "research") return ["fixture://market-report.json"];
-  if (task.id === "finance") return ["fixture://finance-report.csv"];
-  if (task.id === "outreach") return ["fixture://customer-list.json"];
+  if (task.id === "research") return ["market/market-report.json"];
+  if (task.id === "finance") return ["finance/finance-report.csv"];
+  if (task.id === "outreach") return ["customer/customer-list.json"];
   return [];
 }
 

@@ -1,10 +1,7 @@
-import { copyFile, mkdir } from "node:fs/promises";
-import path from "node:path";
-
 export const SALES_RECOVERY_FIXTURES = {
-  "fixture://market-report.json": "market-report.json",
-  "fixture://finance-report.csv": "finance-report.csv",
-  "fixture://customer-list.json": "customer-list.json",
+  "market/market-report.json": "market/market-report.json",
+  "finance/finance-report.csv": "finance/finance-report.csv",
+  "customer/customer-list.json": "customer/customer-list.json",
 } as const;
 
 export type ControlledFixtureHandle = keyof typeof SALES_RECOVERY_FIXTURES;
@@ -14,24 +11,19 @@ export interface ControlledFixtureProvider {
 }
 
 /**
- * Copies only registry-approved fixtures into an Agent workspace. Arbitrary host
- * paths are never accepted as resource handles.
+ * Validates logical resource handles. Protected content is deliberately never
+ * copied or mounted into an Agent workspace.
  */
 export class LocalControlledFixtureProvider implements ControlledFixtureProvider {
-  constructor(private readonly fixtureRoot: string) {}
+  constructor(_fixtureRoot: string) {}
 
   async materialize(workspacePath: string, handles: readonly string[]): Promise<readonly string[]> {
-    const destinationRoot = path.join(workspacePath, ".agentrelay", "fixtures");
-    await mkdir(destinationRoot, { recursive: true });
-    const destinations: string[] = [];
+    void workspacePath;
     for (const handle of handles) {
-      const filename = SALES_RECOVERY_FIXTURES[handle as ControlledFixtureHandle];
-      if (!filename) throw new Error(`Unknown controlled fixture: ${handle}`);
-      const source = path.join(this.fixtureRoot, filename);
-      const destination = path.join(destinationRoot, filename);
-      await copyFile(source, destination);
-      destinations.push(path.relative(workspacePath, destination));
+      if (!SALES_RECOVERY_FIXTURES[handle as ControlledFixtureHandle]) {
+        throw new Error(`Unknown protected resource handle: ${handle}`);
+      }
     }
-    return destinations;
+    return [];
   }
 }

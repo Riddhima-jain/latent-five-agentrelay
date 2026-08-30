@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import type { AgentExecutor, ExecutionContext } from "../domain/ports.js";
 import type { AgentExecutionResult, AgentTask } from "../domain/task.js";
 import type { AgentRunner } from "../types.js";
-import type { ControlledFixtureProvider } from "./controlled-fixtures.js";
 import { validateAgentExecutionResult } from "./result-validator.js";
 
 export interface WorkflowAgentRuntime {
@@ -18,7 +17,6 @@ export class CodexAgentAdapter implements AgentExecutor {
   constructor(
     private readonly runner: AgentRunner,
     agents: readonly WorkflowAgentRuntime[],
-    private readonly fixtures: ControlledFixtureProvider,
   ) {
     for (const agent of agents) this.agents.set(agent.agentId, { ...agent });
   }
@@ -30,14 +28,13 @@ export class CodexAgentAdapter implements AgentExecutor {
     const agent = this.agents.get(agentId);
     if (!agent) throw new Error(`Workflow agent is not registered: ${agentId}`);
 
-    const materializedFixtures = await this.fixtures.materialize(agent.workspacePath, context.allowedResources);
     const sessionKey = `${context.sessionId}:${agentId}`;
     const response = await this.runner.run({
       // A unique runner identity prevents an Agent's normal Playground turn from
       // colliding with a workflow run, particularly for the container runner.
       agentId: workflowRunnerId(sessionKey),
       workspacePath: agent.workspacePath,
-      prompt: buildWorkflowPrompt(task, context, materializedFixtures),
+      prompt: buildWorkflowPrompt(task, context),
       threadId: this.workflowThreads.get(sessionKey) ?? null,
     });
     if (response.threadId) this.workflowThreads.set(sessionKey, response.threadId);
@@ -56,12 +53,11 @@ export function workflowRunnerId(sessionKey: string): string {
 export function buildWorkflowPrompt(
   task: AgentTask,
   context: ExecutionContext,
-  materializedFixtures: readonly string[],
 ): string {
   return [
     "You are a workflow participant. Treat the following Context Capsule as the complete workflow context.",
     "Do not rely on prior conversations or instructions outside this prompt.",
-    "You may inspect only the controlled fixture paths listed below. Do not execute external actions; propose them in the output only.",
+    "Use only the logical protected-resource handles explicitly included in the Context Capsule. Raw protected files are not mounted in this workspace. Do not execute external actions; propose them in the output only.",
     "Return exactly one JSON object, with no Markdown fences or commentary, matching:",
     '{"summary":"string","evidence":[{"claim":"string","sourceRefs":["string"]}],"proposedActions":[{"type":"string","target":"string","payload":{},"rationale":"string optional"}]}',
     "",
@@ -70,7 +66,7 @@ export function buildWorkflowPrompt(
       'For this outreach task, propose exactly one SEND_EMAIL action. Its payload must be {"recipient":"string","subject":"string","body":"string"}. Do not send it yourself.',
     ] : []),
     `Context Capsule: ${JSON.stringify({ goal: context.goal, constraints: context.constraints, dependencyEvidence: context.dependencyEvidence })}`,
-    `Controlled fixture paths: ${JSON.stringify(materializedFixtures)}`,
+    `Resource access: ${JSON.stringify(context.resourceAccess ?? { allowedResourceHandles: context.allowedResources })}`,
   ].join("\n");
 }
 

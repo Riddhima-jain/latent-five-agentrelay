@@ -9,6 +9,10 @@ export interface ContextCapsuleInput {
   constraints: readonly string[];
   allowedResources: readonly string[];
   evidence: readonly EvidenceRecord[];
+  resourceAccess?: {
+    gatewayBaseUrl: string;
+    allowedResourceHandles: readonly string[];
+  };
 }
 
 /**
@@ -32,5 +36,11 @@ export function buildContextCapsule(input: ContextCapsuleInput): ExecutionContex
     constraints: [...input.constraints],
     allowedResources: [...input.allowedResources],
     dependencyEvidence,
+    ...(input.resourceAccess ? {
+      resourceAccess: {
+        gatewayBaseUrl: input.resourceAccess.gatewayBaseUrl,
+        allowedResourceHandles: [...input.resourceAccess.allowedResourceHandles],
+      },
+    } : {}),
   };
 }

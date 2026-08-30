@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { ControlledFixtureProvider } from "./controlled-fixtures.js";
 import { CodexAgentAdapter, workflowRunnerId } from "./codex-agent-adapter.js";
 import type { AgentRunner, RunnerRequest } from "../types.js";
 import type { AgentTask } from "../domain/task.js";
@@ -22,24 +21,20 @@ function runnerWith(output: string) {
   };
   return { runner, requests };
 }
-const fixtures: ControlledFixtureProvider = { async materialize(_workspace, handles) {
-  expect(handles).toEqual(["fixture://market-report.json"]);
-  return [".agentrelay/fixtures/market-report.json"];
-} };
-
 describe("CodexAgentAdapter", () => {
   it("uses a new workflow-scoped session, provides only the capsule, and validates the response", async () => {
     const { runner, requests } = runnerWith(JSON.stringify({ summary: "Demand declined", evidence: [], proposedActions: [] }));
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
     await expect(adapter.execute("research-agent", task, context)).resolves.toMatchObject({ summary: "Demand declined" });
     expect(requests[0]).toMatchObject({ threadId: null, workspacePath: "/tmp/research", agentId: workflowRunnerId("workflow-1:research-agent") });
-    expect(requests[0]?.prompt).toContain("Controlled fixture paths: [\".agentrelay/fixtures/market-report.json\"]");
+    expect(requests[0]?.prompt).toContain("Raw protected files are not mounted");
+    expect(requests[0]?.prompt).toContain("fixture://market-report.json");
     expect(requests[0]?.prompt).not.toContain("Playground");
   });
 
   it("reuses a thread only for the same workflow participant", async () => {
     const { runner, requests } = runnerWith(JSON.stringify({ summary: "ok", evidence: [], proposedActions: [] }));
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
     await adapter.execute("research-agent", task, context);
     await adapter.execute("research-agent", task, context);
     await adapter.execute("research-agent", { ...task, sessionId: "workflow-2" }, { ...context, sessionId: "workflow-2" });
@@ -49,13 +44,13 @@ describe("CodexAgentAdapter", () => {
 
   it("fails closed when Codex returns prose or a malformed structured result", async () => {
     const { runner } = runnerWith("Here is my answer: {});");
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
     await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("AGENT_RESULT_INVALID");
   });
 
   it("fails closed when the JSON result omits a required field", async () => {
     const { runner } = runnerWith(JSON.stringify({ summary: "Incomplete", evidence: [] }));
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
     await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("AGENT_RESULT_INVALID");
   });
 
@@ -64,7 +59,7 @@ describe("CodexAgentAdapter", () => {
       async run() { throw new Error("controlled runtime failure"); },
       async cancel() { return false; }, async isAvailable() { return true; },
     };
-    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }], fixtures);
+    const adapter = new CodexAgentAdapter(runner, [{ agentId: "research-agent", workspacePath: "/tmp/research" }]);
     await expect(adapter.execute("research-agent", task, context)).rejects.toThrow("controlled runtime failure");
   });
 });
