@@ -69,7 +69,10 @@ export interface RelaySessionView {
   recommendations?: Array<{ id: string; taskId: string; actionType: string; summary: string; decision: "RECOMMEND_ONLY"; reasons: string[]; supportingEvidenceIds: string[] }>;
 }
 
-export interface CreateRelaySessionInput { goal?: string | undefined; scenario?: "normal" | "timeout" | "denial" | undefined }
+export interface CreateRelaySessionInput {
+  goal?: string | undefined;
+  scenario?: "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "evidence_acceptance" | undefined;
+}
 type Awaitable<T> = T | Promise<T>;
 export interface RelaySessionReader {
   createSession(input?: CreateRelaySessionInput): Awaitable<RelaySessionView>;

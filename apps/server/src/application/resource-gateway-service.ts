@@ -7,6 +7,8 @@ import type { FixtureResourceStore } from "./fixture-resource-store.js";
 import type { ToolPolicyService } from "./tool-policy-service.js";
 
 export class ResourceGatewayService {
+  private readonly authorizedSourceRefs = new Map<string, Set<string>>();
+
   constructor(private readonly grants: AccessGrantService, private readonly policy: ToolPolicyService, private readonly resources: FixtureResourceStore, private readonly traceSink: TraceSink, private readonly traceIdForSession: (sessionId: string) => Promise<string>, private readonly now: () => string = () => new Date().toISOString()) {}
   async readResource(input: { grantId: string; resource: string }): Promise<{ content: string; contentType: string; sourceRef: string }> {
     const grant = await this.grants.getGrant(input.grantId);
@@ -19,7 +21,20 @@ export class ResourceGatewayService {
     }
     await this.trace(grant!, "tool.access.allowed", input.resource, decision);
     const result = await this.resources.read(input.resource);
-    return { ...result, sourceRef: `resource://${input.resource}` };
+    const sourceRef = `resource://${input.resource}`;
+    const key = this.provenanceKey(grant!);
+    const refs = this.authorizedSourceRefs.get(key) ?? new Set<string>();
+    refs.add(sourceRef);
+    this.authorizedSourceRefs.set(key, refs);
+    return { ...result, sourceRef };
+  }
+
+  async listAuthorizedSourceRefs(input: { sessionId: string; taskId: string; agentId: string }): Promise<string[]> {
+    return [...(this.authorizedSourceRefs.get(`${input.sessionId}:${input.taskId}:${input.agentId}`) ?? [])];
+  }
+
+  private provenanceKey(grant: { sessionId: string; taskId: string; agentId: string }): string {
+    return `${grant.sessionId}:${grant.taskId}:${grant.agentId}`;
   }
   private async trace(grant: NonNullable<Awaited<ReturnType<AccessGrantService["getGrant"]>>>, type: "tool.access.requested" | "tool.access.allowed" | "tool.access.denied", resource: string, decision: ToolAccessDecision) {
     await this.traceSink.append({ id: `${grant.sessionId}:${type}:${randomUUID()}`, traceId: await this.traceIdForSession(grant.sessionId), sessionId: grant.sessionId, taskId: grant.taskId, agentId: grant.agentId, type, timestamp: this.now(), metadata: { tool: "resource.read", resource, operation: "read", decision: decision.decision, reason: decision.reason } });

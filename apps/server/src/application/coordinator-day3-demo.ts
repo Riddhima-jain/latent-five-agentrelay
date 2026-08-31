@@ -57,6 +57,7 @@ function createHarness(execute: Execute) {
       async save(record) { evidence.push(record); },
       async listForTasks(taskIds) { return evidence.filter((record) => taskIds.includes(record.taskId)); },
     },
+    evidenceSourceAuthorizer: { async listAuthorizedSourceRefs() { return []; } },
     traceSink: { async append(event) { traces.push(event); } },
   };
   return { ports, calls, storedTasks, traces, getSession: () => storedSession };

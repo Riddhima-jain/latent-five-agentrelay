@@ -1,11 +1,11 @@
 import type { AgentManifest } from "../domain/capability.js";
 import type { EvidenceRecord } from "../domain/evidence.js";
-import type { AccessGrantIssuer, AgentExecutor, EvidenceStore, ExecutionContext, SessionStore, TaskStore, TraceSink } from "../domain/ports.js";
+import type { AccessGrantIssuer, AgentExecutor, EvidenceSourceAuthorizer, EvidenceStore, ExecutionContext, SessionStore, TaskStore, TraceSink } from "../domain/ports.js";
 import type { SharedSession } from "../domain/session.js";
 import type { AgentTask, WorkflowTaskDefinition } from "../domain/task.js";
 import type { TraceEvent, TraceEventType } from "../domain/trace.js";
 import { routeTaskByCapability } from "./capability-router.js";
-import { applyEvidenceAcceptance } from "./evidence-acceptance.js";
+import { applyEvidenceAcceptance, assessEvidence } from "./evidence-acceptance.js";
 import type { DagValidationError } from "./dag-validator.js";
 import { validateTaskDag } from "./dag-validator.js";
 import { scheduleReadyTasks } from "./scheduler.js";
@@ -17,6 +17,7 @@ export interface CoordinatorPorts {
   sessionStore: SessionStore;
   taskStore: TaskStore;
   evidenceStore: EvidenceStore;
+  evidenceSourceAuthorizer: EvidenceSourceAuthorizer;
   traceSink: TraceSink;
   accessGrantIssuer?: AccessGrantIssuer;
 }
@@ -140,16 +141,31 @@ export class Coordinator {
   }
 
   private async persistEvidence(task: AgentTask, agentId: string, evidence: readonly { claim: string; sourceRefs: string[] }[]): Promise<void> {
-    await Promise.all(evidence.map((item, index) => {
+    const dependencyEvidence = await this.ports.evidenceStore.listForTasks(task.dependsOn);
+    const authorizedSourceRefs = new Set(await this.ports.evidenceSourceAuthorizer.listAuthorizedSourceRefs({
+      sessionId: task.sessionId,
+      taskId: task.id,
+      agentId,
+    }));
+    for (const record of dependencyEvidence) {
+      if (record.sessionId === task.sessionId && record.status === "accepted") {
+        for (const sourceRef of record.sourceRefs) authorizedSourceRefs.add(sourceRef);
+      }
+    }
+    await Promise.all(evidence.map(async (item, index) => {
       const provisional: EvidenceRecord = {
         id: `${task.sessionId}:${task.id}:evidence:${index + 1}`, sessionId: task.sessionId, taskId: task.id,
         producerAgentId: agentId, status: "provisional", claim: item.claim, sourceRefs: [...item.sourceRefs], createdAt: this.now(),
       };
-      const record = applyEvidenceAcceptance(provisional, task);
-      return Promise.all([
-        this.ports.evidenceStore.save(record),
-        this.trace("evidence.created", { taskId: task.id, agentId, metadata: { evidenceId: record.id } }),
-      ]);
+      const acceptance = assessEvidence(provisional, task, authorizedSourceRefs);
+      const record = applyEvidenceAcceptance(provisional, task, authorizedSourceRefs);
+      await this.ports.evidenceStore.save(record);
+      await this.trace("evidence.created", { taskId: task.id, agentId, metadata: { evidenceId: record.id } });
+      await this.trace(record.status === "accepted" ? "evidence.accepted" : "evidence.rejected", {
+        taskId: task.id,
+        agentId,
+        metadata: { evidenceId: record.id, reasons: acceptance.reasons },
+      });
     }));
   }
 

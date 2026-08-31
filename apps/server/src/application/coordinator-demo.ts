@@ -38,6 +38,9 @@ const ports: CoordinatorPorts = {
     async save(record) { evidence.push(record); },
     async listForTasks(taskIds) { return evidence.filter((record) => taskIds.includes(record.taskId)); },
   },
+  evidenceSourceAuthorizer: {
+    async listAuthorizedSourceRefs({ taskId }) { return [`fixture://${taskId}`]; },
+  },
   traceSink: { async append(event) { traces.push(event); } },
 };
 

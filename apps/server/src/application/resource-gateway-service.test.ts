@@ -22,6 +22,7 @@ describe("ResourceGatewayService", () => {
     const gateway = new ResourceGatewayService(grants, new ToolPolicyService(() => Date.parse("2026-08-30T00:01:00.000Z")), new FixtureResourceStore(path.resolve("../../fixtures/sales-recovery/protected")), store, async () => "trace-session");
     await expect(gateway.readResource({ grantId: grant.id, resource: "market/market-report.json" })).resolves.toMatchObject({ contentType: "application/json", sourceRef: "resource://market/market-report.json" });
     await expect(gateway.readResource({ grantId: grant.id, resource: "finance/finance-report.csv" })).rejects.toMatchObject({ statusCode: 403, message: "RESOURCE_ACCESS_DENIED: RESOURCE_OUT_OF_SCOPE" });
+    await expect(gateway.listAuthorizedSourceRefs({ sessionId: "session", taskId: "research", agentId: research.agentId })).resolves.toEqual(["resource://market/market-report.json"]);
     const serializedTrace = JSON.stringify(await store.listTrace("session"));
     expect(serializedTrace).toContain("tool.access.allowed");
     expect(serializedTrace).toContain("tool.access.denied");

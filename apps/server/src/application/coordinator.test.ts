@@ -27,6 +27,9 @@ function makePorts(overrides: Partial<CoordinatorPorts> = {}) {
       async save(record) { savedEvidence.push(record); },
       async listForTasks(taskIds) { return savedEvidence.filter((record) => taskIds.includes(record.taskId)); },
     },
+    evidenceSourceAuthorizer: {
+      async listAuthorizedSourceRefs({ taskId }) { return [`fixture://${taskId}`]; },
+    },
     traceSink: { async append(event) { traces.push({ type: event.type, taskId: event.taskId }); } },
     ...overrides,
   };
