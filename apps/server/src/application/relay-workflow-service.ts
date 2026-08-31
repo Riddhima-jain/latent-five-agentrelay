@@ -314,7 +314,11 @@ export class RelayWorkflowService implements RelaySessionReader {
       }),
       approval,
       trace: traces.map(projectTrace),
-      evidence: evidence.map((record) => ({ id: record.id, taskId: record.taskId, claim: record.claim, sourceRefs: [...record.sourceRefs], status: record.status, createdAt: record.createdAt })),
+      evidence: evidence.map((record) => {
+        const rejected = traces.find((event) => event.type === "evidence.rejected" && event.metadata?.evidenceId === record.id);
+        const rejectionReasons = Array.isArray(rejected?.metadata?.reasons) ? rejected.metadata.reasons.map(String) : [];
+        return { id: record.id, taskId: record.taskId, claim: record.claim, sourceRefs: [...record.sourceRefs], status: record.status, createdAt: record.createdAt, ...(rejectionReasons.length ? { rejectionReasons } : {}) };
+      }),
       receipts: receipts.map((receipt) => ({ actionId: receipt.actionId, provider: receipt.provider, externalReference: receipt.externalReference, acceptedAt: receipt.acceptedAt })),
       agentManifests: this.agents.map(projectAgentManifest),
       resourceAccessEvents: traces.filter((event) => event.type === "tool.access.allowed" || event.type === "tool.access.denied").map((event) => ({ id: event.id, timestamp: event.timestamp, agentId: event.agentId ?? "unknown", agentName: this.agents.find((agent) => agent.agentId === event.agentId)?.name ?? "Unknown Agent", taskId: event.taskId ?? "unknown", tool: "resource.read" as const, resource: String(event.metadata?.resource ?? "unknown"), operation: "read" as const, decision: event.type === "tool.access.allowed" ? "ALLOW" as const : "DENY" as const, reason: String(event.metadata?.reason ?? "INVALID_GRANT") })),

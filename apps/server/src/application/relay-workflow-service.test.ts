@@ -227,7 +227,7 @@ describe("RelayWorkflowService", () => {
 
     expect(researchEvidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceRefs: ["resource://market/competitor-pricing.csv"], status: "accepted" }),
-      expect.objectContaining({ sourceRefs: ["resource://external/unverified-rumor.txt"], status: "rejected" }),
+      expect.objectContaining({ sourceRefs: ["resource://external/unverified-rumor.txt"], status: "rejected", rejectionReasons: ["Evidence source was not obtained through an authorized resource read"] }),
     ]));
     expect(settled.trace.map((event) => event.type)).toEqual(expect.arrayContaining(["evidence.accepted", "evidence.rejected"]));
     const strategyPrompt = runner.requests.find((request) => request.prompt.includes('"id":"strategy"'))?.prompt ?? "";

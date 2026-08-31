@@ -109,15 +109,18 @@ function RecommendationCard({ recommendation }: { recommendation: RelayRecommend
 function MiddlewareInterventions({ session }: { session: RelaySession }) {
   const deniedAccess = [...(session.resourceAccessEvents ?? [])].reverse().find((event) => event.decision === "DENY");
   const approvalBypass = [...session.trace].reverse().find((event) => event.type === "action.failed" && event.summary === "NO_APPROVAL");
-  if (!deniedAccess && !approvalBypass) return null;
+  const rejectedEvidence = session.evidence?.find((record) => record.status === "rejected");
+  if (!deniedAccess && !approvalBypass && !rejectedEvidence) return null;
 
   const manifest = deniedAccess ? session.agentManifests?.find((agent) => agent.agentId === deniedAccess.agentId) : undefined;
+  const interventionCount = Number(Boolean(deniedAccess)) + Number(Boolean(approvalBypass)) + Number(Boolean(rejectedEvidence));
   return (
     <section className="middleware-interventions" aria-labelledby="middleware-interventions-title">
-      <header><div><span className="resource-panel-eyebrow">Middleware enforcement</span><h2 id="middleware-interventions-title">Threats blocked in real time</h2><p>The control plane stopped these operations before protected data or external systems were reached.</p></div><span className="intervention-count">{Number(Boolean(deniedAccess)) + Number(Boolean(approvalBypass))} blocked</span></header>
+      <header><div><span className="resource-panel-eyebrow">Middleware enforcement</span><h2 id="middleware-interventions-title">Unsafe inputs and actions blocked</h2><p>The control plane prevented unauthorized operations and untrusted evidence from influencing execution.</p></div><span className="intervention-count">{interventionCount} blocked</span></header>
       <div className="intervention-grid">
         {deniedAccess && <article className="intervention-card"><span className="intervention-icon">×</span><div><header><strong>Out-of-scope data access blocked</strong><span>Workflow failed safely</span></header><p><b>{deniedAccess.agentName}</b> requested <code>{deniedAccess.resource}</code>, which is outside its run-scoped permission.</p><dl><div><dt>Reason</dt><dd>{deniedAccess.reason.replaceAll("_", " ")}</dd></div><div><dt>Permitted scope</dt><dd>{manifest?.resourceScopes.join(", ") || "No matching scope"}</dd></div><div><dt>Result</dt><dd>No data returned</dd></div></dl></div></article>}
         {approvalBypass && <article className="intervention-card"><span className="intervention-icon">×</span><div><header><strong>Human-approval bypass blocked</strong><span>External write prevented</span></header><p><b>Outreach Agent</b> attempted to send email without a valid payload-bound approval.</p><dl><div><dt>Reason</dt><dd>No approval</dd></div><div><dt>Enforced by</dt><dd>Trusted execution boundary</dd></div><div><dt>Result</dt><dd>No email sent</dd></div></dl></div></article>}
+        {rejectedEvidence && <article className="intervention-card intervention-evidence"><span className="intervention-icon">×</span><div><header><strong>Unverified evidence excluded</strong><span>Propagation prevented</span></header><p><b>{rejectedEvidence.claim}</b> cited a source that was not obtained through the Agent’s authorized resource gateway.</p><dl><div><dt>Source</dt><dd>{rejectedEvidence.sourceRefs.join(", ")}</dd></div><div><dt>Reason</dt><dd>{rejectedEvidence.rejectionReasons?.join("; ") || "Evidence failed acceptance policy"}</dd></div><div><dt>Result</dt><dd>Excluded from downstream support</dd></div></dl></div></article>}
       </div>
     </section>
   );
@@ -232,7 +235,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
       <section className="relay-detail-grid">
         <article className="reference-panel evidence-panel">
           <header><h2>Evidence</h2><span className="soft-badge">{session.evidence?.length ?? evidence.length} records</span></header>
-          <div className="evidence-list">{session.evidence?.length ? session.evidence.map((record) => <div className="evidence-row" key={record.id}><span className="evidence-icon">▤</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ")}</small></div><div><b>{record.status}</b><small>{record.taskId}</small></div></div>) : evidence.map(([title, source, kind, icon]) => <div className="evidence-row" key={title}><span className="evidence-icon">{icon === "web" ? "◎" : icon === "sheet" ? "▦" : "▤"}</span><div><strong>{title}</strong><small>{source}</small></div><div><b>Preview</b><small>{kind}</small></div></div>)}</div>
+          <div className="evidence-list">{session.evidence?.length ? session.evidence.map((record) => <div className={`evidence-row evidence-row-${record.status}`} key={record.id}><span className="evidence-icon">{record.status === "rejected" ? "×" : "▤"}</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ")}</small>{record.rejectionReasons?.length ? <em>{record.rejectionReasons.join("; ")}</em> : null}</div><div><b>{record.status}</b><small>{record.status === "rejected" ? "Not propagated" : record.taskId}</small></div></div>) : evidence.map(([title, source, kind, icon]) => <div className="evidence-row" key={title}><span className="evidence-icon">{icon === "web" ? "◎" : icon === "sheet" ? "▦" : "▤"}</span><div><strong>{title}</strong><small>{source}</small></div><div><b>Preview</b><small>{kind}</small></div></div>)}</div>
           <button className="panel-link">View all evidence →</button>
         </article>
         <article className="reference-panel decision-panel" ref={decisionPanelRef} tabIndex={-1}>

@@ -159,6 +159,7 @@ export interface RelaySession {
     sourceRefs: string[];
     status: string;
     createdAt: string;
+    rejectionReasons?: string[];
   }>;
   receipts?: Array<{
     actionId: string;

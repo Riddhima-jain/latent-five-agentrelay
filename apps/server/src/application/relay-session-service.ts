@@ -62,7 +62,7 @@ export interface RelaySessionView {
   tasks: RelayTaskView[];
   approval: RelayApprovalView | null;
   trace: RelayTraceView[];
-  evidence?: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; status: string; createdAt: string }>;
+  evidence?: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; status: string; createdAt: string; rejectionReasons?: string[] }>;
   receipts?: Array<{ actionId: string; provider: "mock" | "resend"; externalReference: string; acceptedAt: string }>;
   agentManifests?: RelayAgentManifestView[];
   resourceAccessEvents?: Array<{ id: string; timestamp: string; agentId: string; agentName: string; taskId: string; tool: "resource.read"; resource: string; operation: "read"; decision: "ALLOW" | "DENY"; reason: string }>;
