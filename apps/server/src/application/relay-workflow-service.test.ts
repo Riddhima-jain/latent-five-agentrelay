@@ -234,4 +234,49 @@ describe("RelayWorkflowService", () => {
     expect(strategyPrompt).toContain("resource://market/competitor-pricing.csv");
     expect(strategyPrompt).not.toContain("external/unverified-rumor.txt");
   });
+
+  it("exposes Strategy's context capsule with the fabricated claims excluded and reasoned", async () => {
+    const { service } = await createHarness();
+    const created = await service.createSession({ scenario: "evidence_acceptance" });
+    const settled = await waitFor(service, created.id, ["degraded", "awaiting_approval", "completed"]);
+
+    const capsule = settled.contextCapsules?.find((entry) => entry.taskId === "strategy");
+    expect(capsule).toBeDefined();
+    expect(capsule!.dependencyTaskIds).toEqual(["research", "finance"]);
+    // Only the authorized market claim and the real finance evidence propagate.
+    expect(capsule!.includedEvidence.every((record) => record.sourceRefs.length > 0)).toBe(true);
+    expect(capsule!.includedEvidence.some((record) => record.taskId === "research")).toBe(true);
+    expect(capsule!.includedEvidence.some((record) => record.taskId === "finance")).toBe(true);
+
+    const excludedReasons = capsule!.excludedEvidence.flatMap((record) => record.reasons);
+    expect(excludedReasons).toEqual(expect.arrayContaining([
+      "Evidence requires at least one valid source reference",
+      "Evidence producer does not match the assigned agent",
+    ]));
+    expect(capsule!.excludedEvidence.some((record) => record.producerAgentId === "finance-agent")).toBe(true);
+  });
+
+  it("absorbs a fan-out of concurrent approvals into exactly one send (duplicate_approval)", async () => {
+    const token = "harness-executor-token-000000000000";
+    const root = await mkdtemp(path.join(os.tmpdir(), "agentrelay-workflow-"));
+    const store = new RelayJsonStore(path.join(root, "relay.json"));
+    const executionStore = new InMemoryExecutionStore();
+    const seenService = new MockProtectedEmailService({ expectedToken: token });
+    const executor = new MockEmailExecutor(store, { token, service: seenService });
+    const service = new RelayWorkflowService(store, new WorkflowRunner(), executor, path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), undefined, undefined, undefined, undefined, executionStore, [token]);
+    await service.initialize();
+
+    const created = await service.createSession({ scenario: "duplicate_approval" });
+    const pending = await waitFor(service, created.id, ["awaiting_approval"]);
+
+    const completed = await service.decideApproval(pending.approval!.id, "approve");
+    expect(completed.status).toBe("completed");
+    expect(completed.idempotency).toEqual({ concurrentRequests: 5, claimsWon: 1, duplicatesRejected: 4, sends: 1 });
+    expect(seenService.sentCount).toBe(1);
+    expect(await store.listReceipts(created.id)).toHaveLength(1);
+
+    const ledgerKey = `${created.id}|${pending.approval!.actionId}|${pending.approval!.actionHash}`;
+    expect((await executionStore.get(ledgerKey))?.attempts).toBe(1);
+    expect(completed.trace.map((event) => event.type)).toContain("idempotency.enforced");
+  });
 });
