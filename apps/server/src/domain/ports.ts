@@ -39,6 +39,11 @@ export interface EvidenceStore {
   listForTasks(taskIds: string[]): Promise<EvidenceRecord[]>;
 }
 
+/** Trusted record of sourceRefs returned by successful, policy-authorized reads. */
+export interface EvidenceSourceAuthorizer {
+  listAuthorizedSourceRefs(input: { sessionId: string; taskId: string; agentId: string }): Promise<string[]>;
+}
+
 export interface TraceSink {
   append(event: TraceEvent): Promise<void>;
 }

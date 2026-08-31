@@ -111,11 +111,11 @@ export class RelayWorkflowService implements RelaySessionReader {
     };
     await Promise.all(this.agents.map((agent) => mkdir(path.join(this.workspaceRootPath, agent.agentId), { recursive: true })));
     const scenario = input.scenario ?? "normal";
-    const executor = new RecordingAgentExecutor(this.adapter, this.store, scenario, this.now);
+    const executor = new RecordingAgentExecutor(this.adapter, this.store, scenario, this.resourceGateway, this.now);
     const coordinator = new Coordinator(
       SALES_RECOVERY_TASKS, this.agents,
-      { agentExecutor: executor, sessionStore: this.store, taskStore: this.store.taskStore, evidenceStore: this.store.evidenceStore, traceSink: this.store, accessGrantIssuer: this.grants },
-      this.now, undefined, resourcesForTask,
+      { agentExecutor: executor, sessionStore: this.store, taskStore: this.store.taskStore, evidenceStore: this.store.evidenceStore, evidenceSourceAuthorizer: this.resourceGateway, traceSink: this.store, accessGrantIssuer: this.grants },
+      this.now, undefined, (task) => resourcesForTask(task, scenario),
     );
     const started = await coordinator.start(session);
     if (!started.started) throw new Error(`Invalid sales recovery workflow: ${started.errors.map((error) => error.message).join("; ")}`);
@@ -177,17 +177,7 @@ export class RelayWorkflowService implements RelaySessionReader {
       const payloadSecrets = [payload.recipient, payload.subject].filter((value): value is string => typeof value === "string" && value.length > 0);
       // ExecutionService owns approval enforcement, the atomic idempotency ledger,
       // timeout/retry, and the redacted action.* / retry.* trace events (KTD10, KTD11).
-      const execution = new ExecutionService({
-        verifier: this.approvalVerifier,
-        store: this.executionStore,
-        executor: this.actionExecutor,
-        recovery: this.recovery,
-        sink: this.store,
-        traceId: session.traceId,
-        secrets: [...this.baseSecrets, ...payloadSecrets],
-        maxAttempts: 3,
-        timeoutMs: 10_000,
-      });
+      const execution = this.createExecutionService(session, payloadSecrets);
       try {
         const outcome = await execution.run(approved, "REQUIRE_APPROVAL");
         if (outcome.terminal) {
@@ -229,7 +219,7 @@ export class RelayWorkflowService implements RelaySessionReader {
     }
   }
 
-  private async applyPolicy(sessionId: string, _scenario: ControlledScenario): Promise<void> {
+  private async applyPolicy(sessionId: string, scenario: ControlledScenario): Promise<void> {
     const session = await this.requireSession(sessionId);
     if (session.status === "failed") return;
     const actions = await this.store.listActions(sessionId);
@@ -243,6 +233,24 @@ export class RelayWorkflowService implements RelaySessionReader {
       // Persist the approval record and trace events before the status a poller
       // keys on; the session status is saved once after the loop.
       if (policy.decision === "REQUIRE_APPROVAL") {
+        if (scenario === "bypass_protection" && action.type === "SEND_EMAIL") {
+          await this.trace(session, "policy.approval_required", { taskId: action.taskId, agentId: action.producerAgentId, metadata });
+          const approvedShape: ApprovedAction = {
+            ...action,
+            payloadHash: payloadHashFor(action),
+            idempotencyKey: "",
+          };
+          // The scenario skips approval creation and attacks the real execution
+          // boundary. RelayApprovalVerifier therefore has no satisfied record.
+          const outcome = await this.createExecutionService(session, payloadSecretsFor(action)).run(approvedShape, policy.decision);
+          if (outcome.terminal) {
+            finalStatus = "degraded";
+          } else {
+            finalStatus = "failed";
+            await this.trace(session, "session.failed", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { reason: "SECURITY_INVARIANT_BROKEN: unapproved protected action executed" } });
+          }
+          continue;
+        }
         const approval = { id: `approval-${action.id}`, actionId: action.id, payloadHash: payloadHashFor(action), sessionId, status: "pending" as const, createdAt: this.now() };
         await this.store.saveApproval(approval);
         finalStatus = "awaiting_approval";
@@ -259,6 +267,20 @@ export class RelayWorkflowService implements RelaySessionReader {
       }
     }
     await this.store.save({ ...session, status: finalStatus, updatedAt: this.now() });
+  }
+
+  private createExecutionService(session: SharedSession, payloadSecrets: readonly string[] = []): ExecutionService {
+    return new ExecutionService({
+      verifier: this.approvalVerifier,
+      store: this.executionStore,
+      executor: this.actionExecutor,
+      recovery: this.recovery,
+      sink: this.store,
+      traceId: session.traceId,
+      secrets: [...this.baseSecrets, ...payloadSecrets],
+      maxAttempts: 3,
+      timeoutMs: 10_000,
+    });
   }
 
   private async project(session: SharedSession): Promise<RelaySessionView> {
@@ -317,11 +339,19 @@ function projectAgentManifest(agent: AgentManifest): RelayAgentManifestView {
   return { agentId: agent.agentId, name: agent.name, capabilities: [...agent.capabilities], runnable: agent.runnable, allowedTools: [...(agent.toolPolicy?.allowedTools ?? [])], resourceScopes: (agent.toolPolicy?.resourceScopes ?? []).map((scope) => scope.pattern) };
 }
 
-function resourcesForTask(task: AgentTask): readonly string[] {
-  if (task.id === "research") return ["market/market-report.json"];
+function resourcesForTask(task: AgentTask, scenario: ControlledScenario): readonly string[] {
+  if (task.id === "research") return scenario === "evidence_acceptance"
+    ? ["market/competitor-pricing.csv"]
+    : ["market/market-report.json"];
   if (task.id === "finance") return ["finance/finance-report.csv"];
   if (task.id === "outreach") return ["customer/customer-list.json"];
   return [];
+}
+
+function payloadSecretsFor(action: ProposedAction): string[] {
+  if (action.type !== "SEND_EMAIL") return [];
+  const payload = action.payload as Partial<SendEmailPayload>;
+  return [String(payload.recipient ?? ""), String(payload.subject ?? ""), String(payload.body ?? "")].filter(Boolean);
 }
 
 function projectTaskStatus(task: AgentTask): RelayTaskStatus {

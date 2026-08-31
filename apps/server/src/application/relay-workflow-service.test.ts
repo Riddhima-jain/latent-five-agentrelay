@@ -12,10 +12,20 @@ import { RelayJsonStore } from "./relay-store.js";
 import { RelayWorkflowService } from "./relay-workflow-service.js";
 
 class WorkflowRunner implements AgentRunner {
+  readonly requests: RunnerRequest[] = [];
+
   async run(request: RunnerRequest) {
+    this.requests.push(request);
     const task = /"id":"([^"]+)"/.exec(request.prompt)?.[1] ?? "unknown";
     const action = task === "outreach" ? [{ type: "SEND_EMAIL", target: "customer@example.com", payload: { recipient: "customer@example.com", subject: "Recovery plan", body: "Hello from AgentRelay" }, rationale: "Approved recovery strategy" }] : [];
-    return { output: JSON.stringify({ summary: `${task} completed`, evidence: [{ claim: `${task} evidence`, sourceRefs: ["fixture://source"] }], proposedActions: action }), threadId: `thread-${task}`, usage: null };
+    const sourceRef = task === "research"
+      ? (request.prompt.includes("competitor-pricing.csv") ? "resource://market/competitor-pricing.csv" : "resource://market/market-report.json")
+      : task === "finance"
+        ? "resource://finance/finance-report.csv"
+        : task === "outreach"
+          ? "resource://customer/customer-list.json"
+          : (request.prompt.includes("competitor-pricing.csv") ? "resource://market/competitor-pricing.csv" : "resource://market/market-report.json");
+    return { output: JSON.stringify({ summary: `${task} completed`, evidence: [{ claim: `${task} evidence`, sourceRefs: [sourceRef] }], proposedActions: action }), threadId: `thread-${task}`, usage: null };
   }
   async cancel() { return true; }
   async isAvailable() { return true; }
@@ -25,9 +35,10 @@ async function createHarness(executor?: ExternalActionExecutor, secrets: string[
   const root = await mkdtemp(path.join(os.tmpdir(), "agentrelay-workflow-"));
   const store = new RelayJsonStore(path.join(root, "relay.json"));
   const executionStore = new InMemoryExecutionStore();
-  const service = new RelayWorkflowService(store, new WorkflowRunner(), executor ?? new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), undefined, undefined, undefined, undefined, executionStore, secrets);
+  const runner = new WorkflowRunner();
+  const service = new RelayWorkflowService(store, runner, executor ?? new MockEmailExecutor(store), path.join(root, "workspaces"), path.resolve("../../fixtures/sales-recovery"), () => new Date().toISOString(), () => "fixed-session-id", () => Promise.resolve(true), undefined, undefined, undefined, undefined, executionStore, secrets);
   await service.initialize();
-  return { root, store, service, executionStore };
+  return { root, store, service, executionStore, runner };
 }
 
 async function waitFor(service: RelayWorkflowService, id: string, statuses: string[]) {
@@ -173,5 +184,53 @@ describe("RelayWorkflowService", () => {
     const denied = await waitFor(service, created.id, ["degraded"]);
     expect(denied.approval).toBeNull();
     expect(denied.trace.map((event) => event.type)).toContain("policy.denied");
+  });
+
+  it("uses Research's real grant to deny the controlled Finance-resource breach", async () => {
+    const { service } = await createHarness();
+    const created = await service.createSession({ scenario: "resource_scope_breach" });
+    const failed = await waitFor(service, created.id, ["failed"]);
+
+    expect(failed.tasks.find((task) => task.id === "research")?.status).toBe("failed");
+    expect(failed.resourceAccessEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        taskId: "research",
+        resource: "finance/finance-report.csv",
+        decision: "DENY",
+        reason: "RESOURCE_OUT_OF_SCOPE",
+      }),
+    ]));
+    expect(failed.trace.some((event) => event.type === "retry.scheduled" && event.summary.includes("RESOURCE_ACCESS_DENIED"))).toBe(true);
+  });
+
+  it("routes the unapproved email bypass through ExecutionService and sends nothing", async () => {
+    const { service, store } = await createHarness();
+    const created = await service.createSession({ scenario: "bypass_protection" });
+    const blocked = await waitFor(service, created.id, ["degraded"]);
+
+    expect(blocked.approval).toBeNull();
+    expect(blocked.receipts).toHaveLength(0);
+    expect(await store.listReceipts(created.id)).toHaveLength(0);
+    expect(blocked.trace).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "policy.approval_required" }),
+      expect.objectContaining({ type: "action.failed", summary: "NO_APPROVAL" }),
+    ]));
+    expect(blocked.trace.map((event) => event.type)).not.toContain("approval.requested");
+  });
+
+  it("accepts only evidence backed by an authorized read and excludes the rumor downstream", async () => {
+    const { service, runner } = await createHarness();
+    const created = await service.createSession({ scenario: "evidence_acceptance" });
+    const settled = await waitFor(service, created.id, ["degraded", "awaiting_approval"]);
+    const researchEvidence = settled.evidence!.filter((record) => record.taskId === "research");
+
+    expect(researchEvidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceRefs: ["resource://market/competitor-pricing.csv"], status: "accepted" }),
+      expect.objectContaining({ sourceRefs: ["resource://external/unverified-rumor.txt"], status: "rejected" }),
+    ]));
+    expect(settled.trace.map((event) => event.type)).toEqual(expect.arrayContaining(["evidence.accepted", "evidence.rejected"]));
+    const strategyPrompt = runner.requests.find((request) => request.prompt.includes('"id":"strategy"'))?.prompt ?? "";
+    expect(strategyPrompt).toContain("resource://market/competitor-pricing.csv");
+    expect(strategyPrompt).not.toContain("external/unverified-rumor.txt");
   });
 });
