@@ -32,6 +32,7 @@ export type TraceEventType =
   | "action.executed"
   | "action.failed"
   | "retry.scheduled"
+  | "idempotency.enforced"
   | "session.degraded"
   | "session.completed"
   | "session.failed";

@@ -84,7 +84,7 @@ export const api = {
   relayManifests: () => request<{ manifests: RelayAgentManifestView[] }>("/api/relay/manifests"),
   simulatePolicy: (body: { agentId: string; tool: "resource.read"; resource: string; operation: "read" }) =>
     request<{ result: PolicySimulationResult }>("/api/relay/policy/simulate", { method: "POST", body: JSON.stringify(body) }),
-  createRelaySession: (body: { goal?: string; scenario?: "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "evidence_acceptance" } = {}) =>
+  createRelaySession: (body: { goal?: string; scenario?: "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "duplicate_approval" } = {}) =>
     request<{ session: RelaySession }>("/api/relay/sessions", { method: "POST", body: JSON.stringify(body) }),
   decideApproval: (id: string, decision: "approve" | "deny") =>
     request<{ session: RelaySession }>("/api/relay/approvals/" + id, {

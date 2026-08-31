@@ -171,8 +171,8 @@ export interface RelaySession {
     claim: string;
     sourceRefs: string[];
     status: string;
+    reasons: string[];
     createdAt: string;
-    rejectionReasons?: string[];
   }>;
   receipts?: Array<{
     actionId: string;
@@ -183,4 +183,16 @@ export interface RelaySession {
   agentManifests?: RelayAgentManifestView[];
   resourceAccessEvents?: RelayResourceAccessEvent[];
   recommendations?: RelayRecommendationView[];
+  contextCapsules?: RelayContextCapsuleView[];
+  idempotency?: { concurrentRequests: number; claimsWon: number; duplicatesRejected: number; sends: number };
+}
+
+export interface RelayContextCapsuleView {
+  taskId: string;
+  agentId: string;
+  agentName: string;
+  goal: string;
+  dependencyTaskIds: string[];
+  includedEvidence: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; producerAgentId: string }>;
+  excludedEvidence: Array<{ id: string; taskId: string; claim: string; producerAgentId: string; status: string; reasons: string[] }>;
 }

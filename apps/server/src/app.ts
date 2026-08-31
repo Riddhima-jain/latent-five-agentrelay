@@ -30,7 +30,7 @@ const relayApprovalParams = z.object({ id: z.string().trim().min(1).max(160) });
 const relayDecisionBody = z.object({ decision: z.enum(["approve", "deny"]) }).strict();
 const createRelaySessionBody = z.object({
   goal: z.string().trim().min(1).max(2_000).optional(),
-  scenario: z.enum(["normal", "timeout", "denial", "resource_scope_breach", "bypass_protection", "evidence_acceptance"]).default("normal"),
+  scenario: z.enum(["normal", "timeout", "denial", "resource_scope_breach", "bypass_protection", "evidence_acceptance", "duplicate_approval"]).default("normal"),
 }).strict();
 const policySimulationBody = z.object({
   agentId: z.string().trim().min(1).max(160),

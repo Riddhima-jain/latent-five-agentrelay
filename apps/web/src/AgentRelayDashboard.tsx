@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { RelayAgentManifestView, RelayRecommendationView, RelayResourceAccessEvent, RelaySession, RelayTask } from "./types";
+import type { RelayAgentManifestView, RelayContextCapsuleView, RelayRecommendationView, RelayResourceAccessEvent, RelaySession, RelayTask } from "./types";
 
 const relaySessionStorageKey = "agentrelay.activeSessionId";
 
@@ -30,7 +30,7 @@ const suggestedGoals = [
   "Prepare a customer outreach strategy using the available evidence.",
 ] as const;
 
-type WorkflowScenario = "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "evidence_acceptance";
+type WorkflowScenario = "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "duplicate_approval";
 
 const scenarioDescriptions: Record<WorkflowScenario, string> = {
   normal: "Runs the standard evidence, strategy, approval, and outreach path.",
@@ -38,7 +38,7 @@ const scenarioDescriptions: Record<WorkflowScenario, string> = {
   denial: "Proposes a prohibited action so the server-owned policy registry denies it.",
   resource_scope_breach: "Research requests Finance data outside its grant; middleware denies the read and fails the workflow.",
   bypass_protection: "Outreach attempts a protected send without approval; the execution boundary blocks it.",
-  evidence_acceptance: "Demonstrates accepted authorized evidence and rejected unverified evidence.",
+  duplicate_approval: "Five concurrent email executions race for one approved action. The atomic idempotency ledger admits exactly one and de-duplicates the other four.",
 };
 
 function TaskIcon({ id }: { id: string }) {
@@ -106,21 +106,48 @@ function RecommendationCard({ recommendation }: { recommendation: RelayRecommend
   return <article className="recommendation-card"><header><span>Recommendation only</span><code>{recommendation.actionType}</code></header><p>{recommendation.summary}</p><ul>{recommendation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul><footer><span>{recommendation.supportingEvidenceIds.length} supporting evidence {recommendation.supportingEvidenceIds.length === 1 ? "record" : "records"}</span><strong>Execution blocked</strong></footer></article>;
 }
 
+const roleAgentNames: Record<string, string> = {
+  "research-agent": "Market Research Agent",
+  "finance-agent": "Financial Analysis Agent",
+  "strategy-agent": "Strategy Agent",
+  "outreach-agent": "Outreach Agent",
+};
+
+function ContextCapsuleCard({ capsule, resolveAgent }: { capsule: RelayContextCapsuleView; resolveAgent: (id: string) => string }) {
+  return (
+    <article className="context-capsule-card">
+      <header>
+        <div><strong>{capsule.agentName}</strong><span>Context capsule</span></div>
+        <span className="capsule-count">{capsule.includedEvidence.length} in · {capsule.excludedEvidence.length} excluded</span>
+      </header>
+      <p className="capsule-goal">Goal + accepted evidence from <b>{capsule.dependencyTaskIds.join(" + ")}</b> only. No transcript, no other agents' output.</p>
+      <ul className="capsule-included">
+        {capsule.includedEvidence.map((record) => <li key={record.id}><span className="capsule-mark ok">✓</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ")} · from {resolveAgent(record.producerAgentId)}</small></div></li>)}
+        {capsule.includedEvidence.length === 0 && <li className="capsule-empty">No evidence reached this agent.</li>}
+      </ul>
+      {capsule.excludedEvidence.length > 0 && <div className="capsule-excluded">
+        <span className="capsule-excluded-label">Excluded ({capsule.excludedEvidence.length}) — never entered this agent's input</span>
+        <ul>{capsule.excludedEvidence.map((record) => <li key={record.id}><span className="capsule-mark no">×</span><div><s>{record.claim}</s><small>claims to be from {resolveAgent(record.producerAgentId)} · {record.reasons.join("; ") || record.status}</small></div></li>)}</ul>
+      </div>}
+    </article>
+  );
+}
+
 function MiddlewareInterventions({ session }: { session: RelaySession }) {
   const deniedAccess = [...(session.resourceAccessEvents ?? [])].reverse().find((event) => event.decision === "DENY");
   const approvalBypass = [...session.trace].reverse().find((event) => event.type === "action.failed" && event.summary === "NO_APPROVAL");
-  const rejectedEvidence = session.evidence?.find((record) => record.status === "rejected");
-  if (!deniedAccess && !approvalBypass && !rejectedEvidence) return null;
+  const idempotency = session.idempotency;
+  if (!deniedAccess && !approvalBypass && !idempotency) return null;
 
   const manifest = deniedAccess ? session.agentManifests?.find((agent) => agent.agentId === deniedAccess.agentId) : undefined;
-  const interventionCount = Number(Boolean(deniedAccess)) + Number(Boolean(approvalBypass)) + Number(Boolean(rejectedEvidence));
+  const blockedOperationCount = Number(Boolean(deniedAccess)) + Number(Boolean(approvalBypass)) + (idempotency?.duplicatesRejected ?? 0);
   return (
     <section className="middleware-interventions" aria-labelledby="middleware-interventions-title">
-      <header><div><span className="resource-panel-eyebrow">Middleware enforcement</span><h2 id="middleware-interventions-title">Unsafe inputs and actions blocked</h2><p>The control plane prevented unauthorized operations and untrusted evidence from influencing execution.</p></div><span className="intervention-count">{interventionCount} blocked</span></header>
+      <header><div><span className="resource-panel-eyebrow">Middleware enforcement</span><h2 id="middleware-interventions-title">Enforcement outcomes</h2><p>The control plane blocks unauthorized operations and de-duplicates repeated external actions.</p></div><span className="intervention-count">{blockedOperationCount} blocked</span></header>
       <div className="intervention-grid">
         {deniedAccess && <article className="intervention-card"><span className="intervention-icon">×</span><div><header><strong>Out-of-scope data access blocked</strong><span>Workflow failed safely</span></header><p><b>{deniedAccess.agentName}</b> requested <code>{deniedAccess.resource}</code>, which is outside its run-scoped permission.</p><dl><div><dt>Reason</dt><dd>{deniedAccess.reason.replaceAll("_", " ")}</dd></div><div><dt>Permitted scope</dt><dd>{manifest?.resourceScopes.join(", ") || "No matching scope"}</dd></div><div><dt>Result</dt><dd>No data returned</dd></div></dl></div></article>}
         {approvalBypass && <article className="intervention-card"><span className="intervention-icon">×</span><div><header><strong>Human-approval bypass blocked</strong><span>External write prevented</span></header><p><b>Outreach Agent</b> attempted to send email without a valid payload-bound approval.</p><dl><div><dt>Reason</dt><dd>No approval</dd></div><div><dt>Enforced by</dt><dd>Trusted execution boundary</dd></div><div><dt>Result</dt><dd>No email sent</dd></div></dl></div></article>}
-        {rejectedEvidence && <article className="intervention-card intervention-evidence"><span className="intervention-icon">×</span><div><header><strong>Unverified evidence excluded</strong><span>Propagation prevented</span></header><p><b>{rejectedEvidence.claim}</b> cited a source that was not obtained through the Agent’s authorized resource gateway.</p><dl><div><dt>Source</dt><dd>{rejectedEvidence.sourceRefs.join(", ")}</dd></div><div><dt>Reason</dt><dd>{rejectedEvidence.rejectionReasons?.join("; ") || "Evidence failed acceptance policy"}</dd></div><div><dt>Result</dt><dd>Excluded from downstream support</dd></div></dl></div></article>}
+        {idempotency && <article className="intervention-card idempotent"><span className="intervention-icon">⇉</span><div><header><strong>Concurrent sends de-duplicated</strong><span>Exactly-once execution</span></header><p><b>{idempotency.concurrentRequests}</b> email executions raced the atomic idempotency ledger using the same approved action.</p><dl><div><dt>Execution admitted</dt><dd>{idempotency.claimsWon}</dd></div><div><dt>Duplicates blocked</dt><dd>{idempotency.duplicatesRejected}</dd></div><div><dt>Emails sent</dt><dd>{idempotency.sends}</dd></div></dl><p className="idempotency-proof">One payload-bound approval produced exactly one external side effect.</p></div></article>}
       </div>
     </section>
   );
@@ -132,6 +159,10 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<RelaySession[]>([]);
   const [scenario, setScenario] = useState<WorkflowScenario>("normal");
+  const resolveAgentName = (id: string) =>
+    session.agentManifests?.find((agent) => agent.agentId === id)?.name
+      ?? roleAgentNames[id]
+      ?? id;
   const [goal, setGoal] = useState("");
   const [showComposer, setShowComposer] = useState(true);
   const [dismissedApprovalId, setDismissedApprovalId] = useState<string | null>(null);
@@ -210,7 +241,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
           <div className="workflow-goal-footer"><span>{goal.length.toLocaleString()} / 2,000</span><button className="button button-primary workflow-start-button" disabled={busy || !runtimeReady || !goal.trim()} onClick={createWorkflow}>{busy ? "Starting workflow…" : "Start AgentRelay Workflow →"}</button></div>
           <div className="suggested-goals"><span>Try a suggestion</span><div>{suggestedGoals.map((suggestion) => <button key={suggestion} type="button" onClick={() => setGoal(suggestion)}>{suggestion}</button>)}</div></div>
           <p className="workflow-scope-note"><strong>Demo scope:</strong> workflows are grounded in the committed sales-recovery fixtures so judges can reproduce the same evidence safely.</p>
-          <details className="scenario-controls"><summary>Demo scenario <span>Optional controlled behavior</span></summary><label htmlFor="workflow-scenario">Scenario</label><select id="workflow-scenario" value={scenario} onChange={(event) => setScenario(event.target.value as WorkflowScenario)}><option value="normal">Normal workflow</option><option value="timeout">Timeout and retry</option><option value="denial">Policy denial</option><option value="resource_scope_breach">Out-of-scope data access</option><option value="bypass_protection">Approval bypass attempt</option><option value="evidence_acceptance">Evidence acceptance</option></select><p>{scenarioDescriptions[scenario]}</p><small>Controlled scenarios exercise the real middleware path; they never replace execution with hard-coded success.</small></details>
+          <details className="scenario-controls"><summary>Demo scenario <span>Optional controlled behavior</span></summary><label htmlFor="workflow-scenario">Scenario</label><select id="workflow-scenario" value={scenario} onChange={(event) => setScenario(event.target.value as WorkflowScenario)}><option value="normal">Normal workflow</option><option value="timeout">Timeout and retry</option><option value="denial">Policy denial</option><option value="resource_scope_breach">Out-of-scope data access</option><option value="bypass_protection">Approval bypass attempt</option><option value="duplicate_approval">Duplicate approval race</option></select><p>{scenarioDescriptions[scenario]}</p><small>Controlled scenarios exercise the real middleware path; they never replace execution with hard-coded success.</small></details>
         </section>
         <section className="workflow-history" aria-labelledby="workflow-history-title"><header><div><h2 id="workflow-history-title">Previous workflows</h2><p>Reopen a persisted session and continue from its latest state.</p></div><span>{sessions.length} {sessions.length === 1 ? "workflow" : "workflows"}</span></header>{sessions.length ? <div className="workflow-history-list">{sessions.map((item) => <button key={item.id} className="workflow-history-row" disabled={busy} onClick={() => void openWorkflow(item.id)}><span className={`history-status history-status-${item.status}`} aria-hidden="true"/><span className="history-goal"><strong>{item.goal || "Untitled workflow"}</strong><small>{item.id}</small></span><span className="history-meta"><strong>{item.status.replaceAll("_", " ")}</strong><small>{new Date(item.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></span><span className="history-open">Open →</span></button>)}</div> : <div className="workflow-history-empty"><strong>No workflows yet</strong><p>Your completed and in-progress sessions will appear here.</p></div>}</section>
       </> : <>
@@ -226,6 +257,10 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
       <FleetMap tasks={session.tasks} />
       <section className="workflow-card-grid">{session.tasks.map((task) => <WorkflowCard key={task.id} task={task} />)}</section>
       <MiddlewareInterventions session={session} />
+      {session.contextCapsules?.length ? <section className="context-capsule-section" aria-labelledby="context-capsule-title">
+        <header><div><span className="resource-panel-eyebrow">Scoped evidence propagation</span><h2 id="context-capsule-title">Context Capsules</h2><p>Each downstream agent receives only accepted evidence from its declared dependencies. Rejected and unrelated claims never enter its input.</p></div><span>{session.contextCapsules.length} capsules</span></header>
+        <div className="context-capsule-grid">{session.contextCapsules.map((capsule) => <ContextCapsuleCard key={capsule.taskId} capsule={capsule} resolveAgent={resolveAgentName} />)}</div>
+      </section> : null}
       <section className="resource-governance-panel" aria-labelledby="resource-access-title">
         <header><div><span className="resource-panel-eyebrow">Deterministic control plane</span><h2 id="resource-access-title">Tool &amp; Resource Access</h2><p>Run-scoped permissions govern which protected resources each Agent may read.</p></div><span className="resource-event-count">{session.resourceAccessEvents?.length ?? 0} access events</span></header>
         {session.agentManifests?.length ? <div className="permission-summary-grid">{session.agentManifests.map((manifest) => <PermissionSummary key={manifest.agentId} manifest={manifest} />)}</div> : <div className="resource-contract-empty"><span>◇</span><div><strong>Waiting for registered Agent permissions</strong><p>Permission summaries will appear when the backend supplies real Starter Kit Agent manifests. No access grants or tokens are exposed to the browser.</p></div></div>}
@@ -235,7 +270,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
       <section className="relay-detail-grid">
         <article className="reference-panel evidence-panel">
           <header><h2>Evidence</h2><span className="soft-badge">{session.evidence?.length ?? evidence.length} records</span></header>
-          <div className="evidence-list">{session.evidence?.length ? session.evidence.map((record) => <div className={`evidence-row evidence-row-${record.status}`} key={record.id}><span className="evidence-icon">{record.status === "rejected" ? "×" : "▤"}</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ")}</small>{record.rejectionReasons?.length ? <em>{record.rejectionReasons.join("; ")}</em> : null}</div><div><b>{record.status}</b><small>{record.status === "rejected" ? "Not propagated" : record.taskId}</small></div></div>) : evidence.map(([title, source, kind, icon]) => <div className="evidence-row" key={title}><span className="evidence-icon">{icon === "web" ? "◎" : icon === "sheet" ? "▦" : "▤"}</span><div><strong>{title}</strong><small>{source}</small></div><div><b>Preview</b><small>{kind}</small></div></div>)}</div>
+          <div className="evidence-list">{session.evidence?.length ? session.evidence.map((record) => <div className={`evidence-row evidence-row-${record.status}`} key={record.id}><span className="evidence-icon">{record.status === "accepted" ? "✓" : record.status === "rejected" ? "×" : "▤"}</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ") || "no source"}{record.reasons.length ? ` — ${record.reasons.join("; ")}` : ""}</small></div><div><b>{record.status}</b><small>{record.taskId}</small></div></div>) : evidence.map(([title, source, kind, icon]) => <div className="evidence-row" key={title}><span className="evidence-icon">{icon === "web" ? "◎" : icon === "sheet" ? "▦" : "▤"}</span><div><strong>{title}</strong><small>{source}</small></div><div><b>Preview</b><small>{kind}</small></div></div>)}</div>
           <button className="panel-link">View all evidence →</button>
         </article>
         <article className="reference-panel decision-panel" ref={decisionPanelRef} tabIndex={-1}>
