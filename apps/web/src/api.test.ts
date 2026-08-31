@@ -11,6 +11,15 @@ describe("Relay browser API", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/relay/sessions", expect.objectContaining({ method: "POST", body: JSON.stringify({ goal: "Recover pipeline", scenario: "denial" }) }));
   });
 
+  it("passes middleware enforcement scenarios to the session API", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ session: { id: "STR-SAFETY" } }), { status: 201, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.createRelaySession({ scenario: "resource_scope_breach" });
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/relay/sessions", expect.objectContaining({ body: JSON.stringify({ scenario: "resource_scope_breach" }) }));
+    await api.createRelaySession({ scenario: "bypass_protection" });
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/relay/sessions", expect.objectContaining({ body: JSON.stringify({ scenario: "bypass_protection" }) }));
+  });
+
   it("lists and safely encodes persisted session identifiers", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ sessions: [] }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);

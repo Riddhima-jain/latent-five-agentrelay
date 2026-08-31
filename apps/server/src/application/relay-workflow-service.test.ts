@@ -184,6 +184,7 @@ describe("RelayWorkflowService", () => {
     const denied = await waitFor(service, created.id, ["degraded"]);
     expect(denied.approval).toBeNull();
     expect(denied.trace.map((event) => event.type)).toContain("policy.denied");
+    expect(denied.trace.find((event) => event.type === "policy.denied")?.summary).toBe("Action is prohibited by the server-side registry");
   });
 
   it("uses Research's real grant to deny the controlled Finance-resource breach", async () => {
