@@ -375,5 +375,7 @@ function projectTrace(event: TraceEvent): RelayTraceView {
 function traceSummary(event: TraceEvent): string {
   const reason = event.metadata?.reason;
   if (typeof reason === "string") return reason;
+  const reasons = event.metadata?.reasons;
+  if (Array.isArray(reasons) && reasons.length > 0) return reasons.map(String).join("; ");
   return event.type.replaceAll(".", " ");
 }

@@ -30,6 +30,17 @@ const suggestedGoals = [
   "Prepare a customer outreach strategy using the available evidence.",
 ] as const;
 
+type WorkflowScenario = "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "evidence_acceptance";
+
+const scenarioDescriptions: Record<WorkflowScenario, string> = {
+  normal: "Runs the standard evidence, strategy, approval, and outreach path.",
+  timeout: "Demonstrates real timeout handling, retries, and blocked downstream work.",
+  denial: "Proposes a prohibited action so the server-owned policy registry denies it.",
+  resource_scope_breach: "Research requests Finance data outside its grant; middleware denies the read and fails the workflow.",
+  bypass_protection: "Outreach attempts a protected send without approval; the execution boundary blocks it.",
+  evidence_acceptance: "Demonstrates accepted authorized evidence and rejected unverified evidence.",
+};
+
 function TaskIcon({ id }: { id: string }) {
   return <span className={`workflow-icon workflow-icon-${id}`}>{id === "research" ? "⌕" : id === "finance" ? "▥" : id === "strategy" ? "◎" : "✉"}</span>;
 }
@@ -95,12 +106,29 @@ function RecommendationCard({ recommendation }: { recommendation: RelayRecommend
   return <article className="recommendation-card"><header><span>Recommendation only</span><code>{recommendation.actionType}</code></header><p>{recommendation.summary}</p><ul>{recommendation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul><footer><span>{recommendation.supportingEvidenceIds.length} supporting evidence {recommendation.supportingEvidenceIds.length === 1 ? "record" : "records"}</span><strong>Execution blocked</strong></footer></article>;
 }
 
+function MiddlewareInterventions({ session }: { session: RelaySession }) {
+  const deniedAccess = [...(session.resourceAccessEvents ?? [])].reverse().find((event) => event.decision === "DENY");
+  const approvalBypass = [...session.trace].reverse().find((event) => event.type === "action.failed" && event.summary === "NO_APPROVAL");
+  if (!deniedAccess && !approvalBypass) return null;
+
+  const manifest = deniedAccess ? session.agentManifests?.find((agent) => agent.agentId === deniedAccess.agentId) : undefined;
+  return (
+    <section className="middleware-interventions" aria-labelledby="middleware-interventions-title">
+      <header><div><span className="resource-panel-eyebrow">Middleware enforcement</span><h2 id="middleware-interventions-title">Threats blocked in real time</h2><p>The control plane stopped these operations before protected data or external systems were reached.</p></div><span className="intervention-count">{Number(Boolean(deniedAccess)) + Number(Boolean(approvalBypass))} blocked</span></header>
+      <div className="intervention-grid">
+        {deniedAccess && <article className="intervention-card"><span className="intervention-icon">×</span><div><header><strong>Out-of-scope data access blocked</strong><span>Workflow failed safely</span></header><p><b>{deniedAccess.agentName}</b> requested <code>{deniedAccess.resource}</code>, which is outside its run-scoped permission.</p><dl><div><dt>Reason</dt><dd>{deniedAccess.reason.replaceAll("_", " ")}</dd></div><div><dt>Permitted scope</dt><dd>{manifest?.resourceScopes.join(", ") || "No matching scope"}</dd></div><div><dt>Result</dt><dd>No data returned</dd></div></dl></div></article>}
+        {approvalBypass && <article className="intervention-card"><span className="intervention-icon">×</span><div><header><strong>Human-approval bypass blocked</strong><span>External write prevented</span></header><p><b>Outreach Agent</b> attempted to send email without a valid payload-bound approval.</p><dl><div><dt>Reason</dt><dd>No approval</dd></div><div><dt>Enforced by</dt><dd>Trusted execution boundary</dd></div><div><dt>Result</dt><dd>No email sent</dd></div></dl></div></article>}
+      </div>
+    </section>
+  );
+}
+
 export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: boolean }) {
   const [session, setSession] = useState(emptySession);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<RelaySession[]>([]);
-  const [scenario, setScenario] = useState<"normal" | "timeout" | "denial">("normal");
+  const [scenario, setScenario] = useState<WorkflowScenario>("normal");
   const [goal, setGoal] = useState("");
   const [showComposer, setShowComposer] = useState(true);
   const [dismissedApprovalId, setDismissedApprovalId] = useState<string | null>(null);
@@ -179,7 +207,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
           <div className="workflow-goal-footer"><span>{goal.length.toLocaleString()} / 2,000</span><button className="button button-primary workflow-start-button" disabled={busy || !runtimeReady || !goal.trim()} onClick={createWorkflow}>{busy ? "Starting workflow…" : "Start AgentRelay Workflow →"}</button></div>
           <div className="suggested-goals"><span>Try a suggestion</span><div>{suggestedGoals.map((suggestion) => <button key={suggestion} type="button" onClick={() => setGoal(suggestion)}>{suggestion}</button>)}</div></div>
           <p className="workflow-scope-note"><strong>Demo scope:</strong> workflows are grounded in the committed sales-recovery fixtures so judges can reproduce the same evidence safely.</p>
-          <details className="scenario-controls"><summary>Demo scenario <span>Optional controlled behavior</span></summary><label htmlFor="workflow-scenario">Scenario</label><select id="workflow-scenario" value={scenario} onChange={(event) => setScenario(event.target.value as typeof scenario)}><option value="normal">Normal workflow</option><option value="timeout">Timeout and retry</option><option value="denial">Policy denial</option></select><p>These controls exercise real middleware paths; they do not replace agent execution with hard-coded results.</p></details>
+          <details className="scenario-controls"><summary>Demo scenario <span>Optional controlled behavior</span></summary><label htmlFor="workflow-scenario">Scenario</label><select id="workflow-scenario" value={scenario} onChange={(event) => setScenario(event.target.value as WorkflowScenario)}><option value="normal">Normal workflow</option><option value="timeout">Timeout and retry</option><option value="denial">Policy denial</option><option value="resource_scope_breach">Out-of-scope data access</option><option value="bypass_protection">Approval bypass attempt</option><option value="evidence_acceptance">Evidence acceptance</option></select><p>{scenarioDescriptions[scenario]}</p><small>Controlled scenarios exercise the real middleware path; they never replace execution with hard-coded success.</small></details>
         </section>
         <section className="workflow-history" aria-labelledby="workflow-history-title"><header><div><h2 id="workflow-history-title">Previous workflows</h2><p>Reopen a persisted session and continue from its latest state.</p></div><span>{sessions.length} {sessions.length === 1 ? "workflow" : "workflows"}</span></header>{sessions.length ? <div className="workflow-history-list">{sessions.map((item) => <button key={item.id} className="workflow-history-row" disabled={busy} onClick={() => void openWorkflow(item.id)}><span className={`history-status history-status-${item.status}`} aria-hidden="true"/><span className="history-goal"><strong>{item.goal || "Untitled workflow"}</strong><small>{item.id}</small></span><span className="history-meta"><strong>{item.status.replaceAll("_", " ")}</strong><small>{new Date(item.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></span><span className="history-open">Open →</span></button>)}</div> : <div className="workflow-history-empty"><strong>No workflows yet</strong><p>Your completed and in-progress sessions will appear here.</p></div>}</section>
       </> : <>
@@ -191,9 +219,10 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
       <p className="workflow-active-goal">{session.goal}</p>
       {!runtimeReady && <div className="config-banner"><span>!</span><div><strong>Agent Runtime configuration required</strong><p>Configure Ark or Gemini and ensure Codex is available before starting a real workflow.</p></div></div>}
       {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
-      {pendingApproval && dismissedApprovalId !== pendingApproval.id && <aside className="approval-notification" role="status" aria-live="polite"><button className="approval-notification-close" aria-label="Dismiss approval notification" onClick={() => setDismissedApprovalId(pendingApproval.id)}>×</button><span className="approval-notification-icon">!</span><div><strong>Strategy is ready</strong><p>Outreach requires your approval before it can continue.</p><button onClick={focusDecision}>Review decision →</button></div></aside>}
+      {pendingApproval && dismissedApprovalId !== pendingApproval.id && <aside className="approval-notification" role="status" aria-live="polite"><button className="approval-notification-close" aria-label="Dismiss approval notification" onClick={() => setDismissedApprovalId(pendingApproval.id)}>×</button><span className="approval-notification-icon">!</span><div><strong>Outreach action is ready</strong><p>Outreach requires your approval before it can continue.</p><button onClick={focusDecision}>Review decision →</button></div></aside>}
       <FleetMap tasks={session.tasks} />
       <section className="workflow-card-grid">{session.tasks.map((task) => <WorkflowCard key={task.id} task={task} />)}</section>
+      <MiddlewareInterventions session={session} />
       <section className="resource-governance-panel" aria-labelledby="resource-access-title">
         <header><div><span className="resource-panel-eyebrow">Deterministic control plane</span><h2 id="resource-access-title">Tool &amp; Resource Access</h2><p>Run-scoped permissions govern which protected resources each Agent may read.</p></div><span className="resource-event-count">{session.resourceAccessEvents?.length ?? 0} access events</span></header>
         {session.agentManifests?.length ? <div className="permission-summary-grid">{session.agentManifests.map((manifest) => <PermissionSummary key={manifest.agentId} manifest={manifest} />)}</div> : <div className="resource-contract-empty"><span>◇</span><div><strong>Waiting for registered Agent permissions</strong><p>Permission summaries will appear when the backend supplies real Starter Kit Agent manifests. No access grants or tokens are exposed to the browser.</p></div></div>}
@@ -208,7 +237,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
         </article>
         <article className="reference-panel decision-panel" ref={decisionPanelRef} tabIndex={-1}>
           <header><h2>Automation Decision</h2><span className="soft-badge">Policy: Standard</span></header>
-          {session.approval ? <><div className="decision-title"><span>!</span><strong>{session.approval.decision.replaceAll("_", " ")}</strong></div><p>{session.approval.rationale}</p><h3>Action Summary</h3><dl className="action-summary"><div><dt>Action</dt><dd>{session.approval.actionType}</dd></div><div><dt>Agent</dt><dd>Outreach Agent</dd></div><div><dt>Affected system</dt><dd>Email executor</dd></div><div><dt>Recipients</dt><dd>{session.approval.recipient}</dd></div><div><dt>Payload hash</dt><dd><code>{session.approval.actionHash.slice(0, 12)}…</code></dd></div></dl><div className="approval-request"><div className="requester"><span>SA</span><p><strong>Strategy Agent</strong><small>{session.approval.status}</small></p></div><div className="approval-buttons"><button className="approve-button" disabled={busy || session.approval.status !== "pending"} onClick={() => decide("approve")}>✓ Approve</button><button className="deny-button" disabled={busy || session.approval.status !== "pending"} onClick={() => decide("deny")}>× Deny</button></div></div>{session.receipts?.map((receipt) => <div className="execution-receipt" key={receipt.externalReference}><strong>✓ Executed via {receipt.provider}</strong><code>{receipt.externalReference}</code><small>{new Date(receipt.acceptedAt).toLocaleString()}</small></div>)}</> : <div className={`decision-empty decision-empty-${session.status}`}><strong>{session.status === "degraded" ? "Action denied by policy" : session.status === "failed" ? "Workflow failed" : "No decision pending"}</strong><p>Policy events and failure reasons are recorded in the trace.</p></div>}
+          {session.approval ? <><div className="decision-title"><span>!</span><strong>{session.approval.decision.replaceAll("_", " ")}</strong></div><p>{session.approval.rationale}</p><h3>Action Summary</h3><dl className="action-summary"><div><dt>Action</dt><dd>{session.approval.actionType}</dd></div><div><dt>Agent</dt><dd>Outreach Agent</dd></div><div><dt>Affected system</dt><dd>Email executor</dd></div><div><dt>Recipients</dt><dd>{session.approval.recipient}</dd></div><div><dt>Payload hash</dt><dd><code>{session.approval.actionHash.slice(0, 12)}…</code></dd></div></dl><div className="approval-request"><div className="requester"><span>OA</span><p><strong>Outreach Agent</strong><small>{session.approval.status}</small></p></div><div className="approval-buttons"><button className="approve-button" disabled={busy || session.approval.status !== "pending"} onClick={() => decide("approve")}>✓ Approve</button><button className="deny-button" disabled={busy || session.approval.status !== "pending"} onClick={() => decide("deny")}>× Deny</button></div></div>{session.receipts?.map((receipt) => <div className="execution-receipt" key={receipt.externalReference}><strong>✓ Executed via {receipt.provider}</strong><code>{receipt.externalReference}</code><small>{new Date(receipt.acceptedAt).toLocaleString()}</small></div>)}</> : <div className={`decision-empty decision-empty-${session.status}`}><strong>{session.status === "degraded" ? "Action denied by policy" : session.status === "failed" ? "Workflow failed" : "No decision pending"}</strong><p>Policy events and failure reasons are recorded in the trace.</p></div>}
         </article>
         <article className="reference-panel trace-panel">
           <header><h2>Trace Timeline</h2><button className="filter-button">All Events⌄</button></header>
