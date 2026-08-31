@@ -91,6 +91,18 @@ describe("HTTP boundary", () => {
     await app.close();
   });
 
+  it("dry-runs the real tool policy without creating a workflow or grant", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
+    const denied = await app.inject({ method: "POST", url: "/api/relay/policy/simulate", payload: { agentId: "research-agent", tool: "resource.read", resource: "finance/revenue.csv", operation: "read" } });
+    expect(denied.statusCode).toBe(200);
+    expect(denied.json().result).toMatchObject({ decision: "DENY", reason: "RESOURCE_OUT_OF_SCOPE", resourceScopes: ["market/*"], dryRun: true });
+
+    const allowed = await app.inject({ method: "POST", url: "/api/relay/policy/simulate", payload: { agentId: "research-agent", tool: "resource.read", resource: "market/report.json", operation: "read" } });
+    expect(allowed.json().result).toMatchObject({ decision: "ALLOW", reason: "GRANT_PERMITS_REQUEST", dryRun: true });
+    expect((await app.inject({ method: "GET", url: "/api/relay/sessions" })).json().sessions).toHaveLength(1);
+    await app.close();
+  });
+
   it("rejects unknown Relay resources and injected action contents", async () => {
     const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
     const missing = await app.inject({ method: "GET", url: "/api/relay/sessions/not-found" });

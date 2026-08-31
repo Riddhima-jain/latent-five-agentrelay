@@ -110,6 +110,19 @@ export interface RelayAgentManifestView {
   resourceScopes: string[];
 }
 
+export interface PolicySimulationResult {
+  agentId: string;
+  agentName: string;
+  tool: "resource.read";
+  resource: string;
+  operation: "read";
+  decision: "ALLOW" | "DENY";
+  reason: string;
+  allowedTools: Array<"resource.read">;
+  resourceScopes: string[];
+  dryRun: true;
+}
+
 export type RelayResourceAccessReason =
   | "GRANT_PERMITS_REQUEST"
   | "INVALID_GRANT"

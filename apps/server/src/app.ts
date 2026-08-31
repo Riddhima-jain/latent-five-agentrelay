@@ -32,6 +32,12 @@ const createRelaySessionBody = z.object({
   goal: z.string().trim().min(1).max(2_000).optional(),
   scenario: z.enum(["normal", "timeout", "denial", "resource_scope_breach", "bypass_protection", "evidence_acceptance", "duplicate_approval"]).default("normal"),
 }).strict();
+const policySimulationBody = z.object({
+  agentId: z.string().trim().min(1).max(160),
+  tool: z.literal("resource.read"),
+  resource: z.string().trim().min(1).max(240),
+  operation: z.literal("read"),
+}).strict();
 
 export async function createApp(
   config: AppConfig,
@@ -151,6 +157,11 @@ export async function createApp(
   app.get("/api/relay/sessions", async () => ({ sessions: await relayService.listSessions() }));
 
   app.get("/api/relay/manifests", async () => ({ manifests: await relayService.listAgentManifests() }));
+
+  app.post("/api/relay/policy/simulate", async (request) => {
+    const input = policySimulationBody.parse(request.body);
+    return { result: await relayService.simulatePolicy(input) };
+  });
 
   app.post("/api/relay/sessions", async (request, reply) => {
     const input = createRelaySessionBody.parse(request.body ?? {});

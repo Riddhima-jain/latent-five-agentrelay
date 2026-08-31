@@ -26,6 +26,7 @@ import { ExecutionService } from "./execution-service.js";
 import { RecoveryService } from "./recovery-service.js";
 import { RelayApprovalVerifier } from "./relay-approval-verifier.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
+import { PolicySimulatorService, type PolicySimulationInput, type PolicySimulationResult } from "./policy-simulator-service.js";
 import type { CreateRelaySessionInput, RelayAgentManifestView, RelayApprovalView, RelayContextCapsuleView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
 import { RelayJsonStore } from "./relay-store.js";
 
@@ -41,6 +42,7 @@ export class RelayWorkflowService implements RelaySessionReader {
   private readonly executionStore: ExecutionStore;
   private readonly baseSecrets: readonly string[];
   private readonly grants = new AccessGrantService();
+  private readonly policySimulator = new PolicySimulatorService();
   readonly resourceGateway: ResourceGatewayService;
 
   constructor(
@@ -136,6 +138,13 @@ export class RelayWorkflowService implements RelaySessionReader {
   async listAgentManifests(): Promise<RelayAgentManifestView[]> {
     if (this.agentProvider) this.agents = await this.agentProvider();
     return this.agents.map(projectAgentManifest);
+  }
+
+  async simulatePolicy(input: PolicySimulationInput): Promise<PolicySimulationResult> {
+    if (this.agentProvider) this.agents = await this.agentProvider();
+    const agent = this.agents.find((candidate) => candidate.agentId === input.agentId);
+    if (!agent) throw new HttpError(404, `Registered Agent not found: ${input.agentId}`);
+    return this.policySimulator.simulate(agent, input);
   }
 
   async getSession(id: string): Promise<RelaySessionView> {
