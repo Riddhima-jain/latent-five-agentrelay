@@ -287,13 +287,20 @@ run-scoped grants through the Fastify Resource Gateway.
 
 ```mermaid
 flowchart LR
-    UI["React Web UI"] --> API["Fastify control plane"]
-    API --> Store["JSON metadata and Agent workspaces"]
-    API --> Runtime{"Runtime provider"}
-    Runtime -->|Local POC| Container["Disposable Docker / Colima / Podman container"]
-    Runtime -->|ECS profile| Codex["Codex CLI in application container"]
-    Container --> Ark["Volcengine Ark Responses API"]
-    Codex --> Ark
+    UI["React dashboard"] --> API["Fastify control plane"]
+    API --> Coordinator["AgentRelay coordinator"]
+    Coordinator --> Policy["Capability and policy checks"]
+    Coordinator --> Gateway["Resource Gateway"]
+    Coordinator --> Runtime{"Codex Runtime provider"}
+    Gateway --> Fixtures["Protected fixture resources"]
+    Runtime --> Agents["Specialist Agents"]
+    Agents --> Model["Ark or Gemini model"]
+    Agents --> Coordinator
+    Coordinator --> Approval{"Human approval"}
+    Approval -->|Approved payload hash| Executor["Protected email executor"]
+    Approval -->|Denied or expired| Trace["Audit trace"]
+    Executor --> Trace
+    Coordinator --> Store["Atomic JSON workflow store"]
 ```
 
 The first turn uses `codex exec`; later turns resume the stored Codex thread.
@@ -313,6 +320,8 @@ docker compose config
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Demo SOP](docs/DEMO.md)
+- [Threat model](docs/threat-model.md)
 - [Local POC](docs/LOCAL_POC.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Hackathon extension guide](docs/HACKATHON_EXTENSION_GUIDE.md)

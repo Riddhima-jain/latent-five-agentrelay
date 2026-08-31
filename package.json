@@ -1,9 +1,10 @@
 {
-  "name": "volc-agent-launchpad",
+  "name": "agentrelay",
   "version": "1.0.0",
   "private": true,
-  "description": "A middleware-free Agent platform starter kit running Codex CLI locally or on Volcengine ECS.",
+  "description": "A policy-enforced multi-agent workflow and human-approval platform built on Codex CLI.",
   "type": "module",
+  "packageManager": "npm@11.16.0",
   "workspaces": [
     "apps/*"
   ],
