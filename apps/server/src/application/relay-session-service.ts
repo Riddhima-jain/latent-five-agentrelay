@@ -62,16 +62,28 @@ export interface RelaySessionView {
   tasks: RelayTaskView[];
   approval: RelayApprovalView | null;
   trace: RelayTraceView[];
-  evidence?: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; status: string; createdAt: string }>;
+  evidence?: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; status: string; reasons: string[]; createdAt: string }>;
   receipts?: Array<{ actionId: string; provider: "mock" | "resend"; externalReference: string; acceptedAt: string }>;
   agentManifests?: RelayAgentManifestView[];
   resourceAccessEvents?: Array<{ id: string; timestamp: string; agentId: string; agentName: string; taskId: string; tool: "resource.read"; resource: string; operation: "read"; decision: "ALLOW" | "DENY"; reason: string }>;
   recommendations?: Array<{ id: string; taskId: string; actionType: string; summary: string; decision: "RECOMMEND_ONLY"; reasons: string[]; supportingEvidenceIds: string[] }>;
+  contextCapsules?: RelayContextCapsuleView[];
+  idempotency?: { concurrentRequests: number; claimsWon: number; duplicatesRejected: number; sends: number };
+}
+
+export interface RelayContextCapsuleView {
+  taskId: string;
+  agentId: string;
+  agentName: string;
+  goal: string;
+  dependencyTaskIds: string[];
+  includedEvidence: Array<{ id: string; taskId: string; claim: string; sourceRefs: string[]; producerAgentId: string }>;
+  excludedEvidence: Array<{ id: string; taskId: string; claim: string; producerAgentId: string; status: string; reasons: string[] }>;
 }
 
 export interface CreateRelaySessionInput {
   goal?: string | undefined;
-  scenario?: "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "evidence_acceptance" | undefined;
+  scenario?: "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "evidence_acceptance" | "duplicate_approval" | undefined;
 }
 type Awaitable<T> = T | Promise<T>;
 export interface RelaySessionReader {

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ApprovedAction, ProposedAction } from "../domain/action.js";
 import type { AgentManifest } from "../domain/capability.js";
 import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-workflow.js";
+import type { EvidenceRecord } from "../domain/evidence.js";
 import type { ExternalActionExecutor } from "../domain/ports.js";
 import type { SendEmailPayload } from "../domain/protected-action.js";
 import type { SharedSession } from "../domain/session.js";
@@ -25,7 +26,7 @@ import { ExecutionService } from "./execution-service.js";
 import { RecoveryService } from "./recovery-service.js";
 import { RelayApprovalVerifier } from "./relay-approval-verifier.js";
 import { RecordingAgentExecutor, type ControlledScenario } from "./recording-agent-executor.js";
-import type { CreateRelaySessionInput, RelayAgentManifestView, RelayApprovalView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
+import type { CreateRelaySessionInput, RelayAgentManifestView, RelayApprovalView, RelayContextCapsuleView, RelaySessionReader, RelaySessionView, RelayTaskStatus, RelayTraceView } from "./relay-session-service.js";
 import { RelayJsonStore } from "./relay-store.js";
 
 const defaultGoal = "Analyze the controlled sales-recovery evidence, recommend a strategy, and draft safe customer outreach.";
@@ -34,6 +35,7 @@ export class RelayWorkflowService implements RelaySessionReader {
   private readonly adapter: CodexAgentAdapter;
   private readonly active = new Map<string, Promise<void>>();
   private readonly decisions = new Set<string>();
+  private readonly sessionScenarios = new Map<string, ControlledScenario>();
   private readonly approvalVerifier: RelayApprovalVerifier;
   private readonly recovery = new RecoveryService();
   private readonly executionStore: ExecutionStore;
@@ -111,6 +113,7 @@ export class RelayWorkflowService implements RelaySessionReader {
     };
     await Promise.all(this.agents.map((agent) => mkdir(path.join(this.workspaceRootPath, agent.agentId), { recursive: true })));
     const scenario = input.scenario ?? "normal";
+    this.sessionScenarios.set(session.id, scenario);
     const executor = new RecordingAgentExecutor(this.adapter, this.store, scenario, this.resourceGateway, this.now);
     const coordinator = new Coordinator(
       SALES_RECOVERY_TASKS, this.agents,
@@ -175,6 +178,14 @@ export class RelayWorkflowService implements RelaySessionReader {
         idempotencyKey: `${session.id}|${action.id}|${approval.payloadHash}`,
       };
       const payloadSecrets = [payload.recipient, payload.subject].filter((value): value is string => typeof value === "string" && value.length > 0);
+
+      if ((this.sessionScenarios.get(session.id) ?? "normal") === "duplicate_approval") {
+        const summary = await this.raceConcurrentExecutions(session, approved, payloadSecrets, action);
+        await this.trace(session, "idempotency.enforced", { taskId: action.taskId, agentId: action.producerAgentId, metadata: { ...summary } });
+        await this.store.save({ ...session, status: "completed", updatedAt: this.now() });
+        return this.getSession(session.id);
+      }
+
       // ExecutionService owns approval enforcement, the atomic idempotency ledger,
       // timeout/retry, and the redacted action.* / retry.* trace events (KTD10, KTD11).
       const execution = this.createExecutionService(session, payloadSecrets);
@@ -269,6 +280,29 @@ export class RelayWorkflowService implements RelaySessionReader {
     await this.store.save({ ...session, status: finalStatus, updatedAt: this.now() });
   }
 
+  /**
+   * The `duplicate_approval` scenario: one approve fans out into several
+   * concurrent executions of the same action against the shared idempotency
+   * ledger. The atomic claim admits exactly one; the rest read the stored
+   * result. Returns counts for the dashboard's idempotency panel.
+   */
+  private async raceConcurrentExecutions(
+    session: SharedSession,
+    approved: ApprovedAction,
+    payloadSecrets: readonly string[],
+    action: ProposedAction,
+  ): Promise<{ concurrentRequests: number; claimsWon: number; duplicatesRejected: number; sends: number }> {
+    const concurrentRequests = 5;
+    const service = this.createExecutionService(session, payloadSecrets);
+    await Promise.allSettled(
+      Array.from({ length: concurrentRequests }, () => service.run(approved, "REQUIRE_APPROVAL")),
+    );
+    const ledgerRecord = await this.executionStore.get(approved.idempotencyKey);
+    const claimsWon = ledgerRecord?.status === "succeeded" ? 1 : 0;
+    const sends = (await this.store.listReceipts(session.id)).filter((receipt) => receipt.actionId === action.id).length;
+    return { concurrentRequests, claimsWon, duplicatesRejected: concurrentRequests - claimsWon, sends };
+  }
+
   private createExecutionService(session: SharedSession, payloadSecrets: readonly string[] = []): ExecutionService {
     return new ExecutionService({
       verifier: this.approvalVerifier,
@@ -288,6 +322,13 @@ export class RelayWorkflowService implements RelaySessionReader {
       this.store.listBySession(session.id), this.store.listEvidence(session.id), this.store.listTrace(session.id),
       this.store.listActions(session.id), this.store.listTaskResults(session.id), this.store.listReceipts(session.id),
     ]);
+    const evidenceReasons = new Map<string, string[]>();
+    for (const event of traces) {
+      if ((event.type === "evidence.rejected" || event.type === "evidence.accepted") && typeof event.metadata?.evidenceId === "string") {
+        const reasons = Array.isArray(event.metadata?.reasons) ? event.metadata.reasons.map(String) : [];
+        evidenceReasons.set(event.metadata.evidenceId, reasons);
+      }
+    }
     const approvalPairs = await Promise.all(actions.map(async (candidate) => ({ action: candidate, approval: await this.store.getApproval(`approval-${candidate.id}`) })));
     const approvedPair = approvalPairs.find((pair) => pair.approval) ?? null;
     const action = approvedPair?.action ?? actions[0] ?? null;
@@ -314,11 +355,59 @@ export class RelayWorkflowService implements RelaySessionReader {
       }),
       approval,
       trace: traces.map(projectTrace),
-      evidence: evidence.map((record) => ({ id: record.id, taskId: record.taskId, claim: record.claim, sourceRefs: [...record.sourceRefs], status: record.status, createdAt: record.createdAt })),
+      evidence: evidence.map((record) => ({ id: record.id, taskId: record.taskId, claim: record.claim, sourceRefs: [...record.sourceRefs], status: record.status, reasons: evidenceReasons.get(record.id) ?? [], createdAt: record.createdAt })),
       receipts: receipts.map((receipt) => ({ actionId: receipt.actionId, provider: receipt.provider, externalReference: receipt.externalReference, acceptedAt: receipt.acceptedAt })),
+      contextCapsules: this.buildContextCapsules(session, tasks, evidence, evidenceReasons),
+      ...(this.projectIdempotency(traces) ? { idempotency: this.projectIdempotency(traces)! } : {}),
       agentManifests: this.agents.map(projectAgentManifest),
       resourceAccessEvents: traces.filter((event) => event.type === "tool.access.allowed" || event.type === "tool.access.denied").map((event) => ({ id: event.id, timestamp: event.timestamp, agentId: event.agentId ?? "unknown", agentName: this.agents.find((agent) => agent.agentId === event.agentId)?.name ?? "Unknown Agent", taskId: event.taskId ?? "unknown", tool: "resource.read" as const, resource: String(event.metadata?.resource ?? "unknown"), operation: "read" as const, decision: event.type === "tool.access.allowed" ? "ALLOW" as const : "DENY" as const, reason: String(event.metadata?.reason ?? "INVALID_GRANT") })),
       recommendations: traces.filter((event) => event.type === "policy.recommend_only").flatMap((event) => { const recommendationAction = actions.find((candidate) => candidate.id === event.metadata?.actionId); return recommendationAction ? [{ id: `recommendation-${recommendationAction.id}`, taskId: recommendationAction.taskId, actionType: recommendationAction.type, summary: recommendationAction.rationale ?? `Review proposed ${recommendationAction.type}`, decision: "RECOMMEND_ONLY" as const, reasons: Array.isArray(event.metadata?.reasons) ? event.metadata.reasons.map(String) : [], supportingEvidenceIds: evidence.filter((record) => record.status === "accepted").map((record) => record.id) }] : []; }),
+    };
+  }
+
+  /**
+   * The exact scoped input each dependent agent received: goal + only the
+   * accepted evidence from its declared dependencies. Rejected and
+   * non-dependency evidence is listed as explicitly excluded, with reasons.
+   */
+  private buildContextCapsules(
+    session: SharedSession,
+    tasks: readonly AgentTask[],
+    evidence: readonly EvidenceRecord[],
+    evidenceReasons: Map<string, string[]>,
+  ): RelayContextCapsuleView[] {
+    return tasks
+      .filter((task) => task.dependsOn.length > 0)
+      .map((task) => {
+        const deps = new Set(task.dependsOn);
+        const depEvidence = evidence.filter((record) => deps.has(record.taskId));
+        const agent = this.agents.find((candidate) => candidate.agentId === task.assignedAgentId);
+        return {
+          taskId: task.id,
+          agentId: task.assignedAgentId ?? "unassigned",
+          agentName: agent?.name ?? "Unassigned",
+          goal: session.goal,
+          dependencyTaskIds: [...task.dependsOn],
+          includedEvidence: depEvidence
+            .filter((record) => record.status === "accepted")
+            .map((record) => ({ id: record.id, taskId: record.taskId, claim: record.claim, sourceRefs: [...record.sourceRefs], producerAgentId: record.producerAgentId })),
+          excludedEvidence: depEvidence
+            .filter((record) => record.status !== "accepted")
+            .map((record) => ({ id: record.id, taskId: record.taskId, claim: record.claim, producerAgentId: record.producerAgentId, status: record.status, reasons: evidenceReasons.get(record.id) ?? [] })),
+        };
+      })
+      .filter((capsule) => capsule.includedEvidence.length + capsule.excludedEvidence.length > 0);
+  }
+
+  private projectIdempotency(traces: readonly TraceEvent[]): RelaySessionView["idempotency"] | undefined {
+    const event = traces.find((candidate) => candidate.type === "idempotency.enforced");
+    if (!event) return undefined;
+    const read = (key: string) => Number(event.metadata?.[key] ?? 0);
+    return {
+      concurrentRequests: read("concurrentRequests"),
+      claimsWon: read("claimsWon"),
+      duplicatesRejected: read("duplicatesRejected"),
+      sends: read("sends"),
     };
   }
 
@@ -368,11 +457,15 @@ function projectSessionStatus(status: SharedSession["status"]): RelaySessionView
 function projectTrace(event: TraceEvent): RelayTraceView {
   const danger = event.type.includes("failed") || event.type.includes("denied") || event.type.includes("invalidated");
   const warning = event.type.includes("approval") || event.type.includes("retry") || event.type.includes("proposed");
-  const success = event.type.includes("completed") || event.type.includes("executed") || event.type.includes("accepted");
+  const success = event.type.includes("completed") || event.type.includes("executed") || event.type.includes("accepted") || event.type === "idempotency.enforced";
   return { id: event.id, type: event.type, timestamp: event.timestamp, summary: traceSummary(event), tone: danger ? "danger" : warning ? "warning" : success ? "success" : "neutral", ...(event.taskId ? { taskId: event.taskId } : {}), ...(event.agentId ? { agentId: event.agentId } : {}) };
 }
 
 function traceSummary(event: TraceEvent): string {
+  if (event.type === "idempotency.enforced") {
+    const meta = event.metadata ?? {};
+    return `${meta.concurrentRequests} concurrent approval requests → ${meta.claimsWon} ledger claim won, ${meta.duplicatesRejected} deduplicated, ${meta.sends} email sent`;
+  }
   const reason = event.metadata?.reason;
   if (typeof reason === "string") return reason;
   const reasons = event.metadata?.reasons;
