@@ -28,6 +28,9 @@ jobs:
       - name: Validate application
         run: npm run check
 
+      - name: Validate Markdown links and anchors
+        run: npm run docs:check-links
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 

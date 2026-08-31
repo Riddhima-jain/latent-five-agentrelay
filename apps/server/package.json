@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "demo:coordinator": "tsx src/application/coordinator-demo.ts",
     "demo:coordinator:day3": "tsx src/application/coordinator-day3-demo.ts",
     "demo:policy": "tsx src/application/policy-demo.ts",
