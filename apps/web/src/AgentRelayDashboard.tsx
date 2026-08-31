@@ -38,7 +38,7 @@ const scenarioDescriptions: Record<WorkflowScenario, string> = {
   denial: "Proposes a prohibited action so the server-owned policy registry denies it.",
   resource_scope_breach: "Research requests Finance data outside its grant; middleware denies the read and fails the workflow.",
   bypass_protection: "Outreach attempts a protected send without approval; the execution boundary blocks it.",
-  evidence_acceptance: "Research emits fabricated claims — no source, unauthorized source, wrong producer — and each is rejected before it can reach Strategy.",
+  evidence_acceptance: "Research emits three fabricated claims — no source, unauthorized source, spoofed producer. Each is rejected and kept out of every downstream agent's context capsule; with rejected evidence in the workflow, the outreach action is held at recommend-only.",
   duplicate_approval: "One approval fans out into concurrent executions; the atomic idempotency ledger admits exactly one and the email sends once.",
 };
 
@@ -107,7 +107,14 @@ function RecommendationCard({ recommendation }: { recommendation: RelayRecommend
   return <article className="recommendation-card"><header><span>Recommendation only</span><code>{recommendation.actionType}</code></header><p>{recommendation.summary}</p><ul>{recommendation.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul><footer><span>{recommendation.supportingEvidenceIds.length} supporting evidence {recommendation.supportingEvidenceIds.length === 1 ? "record" : "records"}</span><strong>Execution blocked</strong></footer></article>;
 }
 
-function ContextCapsuleCard({ capsule }: { capsule: RelayContextCapsuleView }) {
+const roleAgentNames: Record<string, string> = {
+  "research-agent": "Market Research Agent",
+  "finance-agent": "Financial Analysis Agent",
+  "strategy-agent": "Strategy Agent",
+  "outreach-agent": "Outreach Agent",
+};
+
+function ContextCapsuleCard({ capsule, resolveAgent }: { capsule: RelayContextCapsuleView; resolveAgent: (id: string) => string }) {
   return (
     <article className="context-capsule-card">
       <header>
@@ -116,12 +123,12 @@ function ContextCapsuleCard({ capsule }: { capsule: RelayContextCapsuleView }) {
       </header>
       <p className="capsule-goal">Goal + accepted evidence from <b>{capsule.dependencyTaskIds.join(" + ")}</b> only. No transcript, no other agents' output.</p>
       <ul className="capsule-included">
-        {capsule.includedEvidence.map((record) => <li key={record.id}><span className="capsule-mark ok">✓</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ")} · from {record.producerAgentId}</small></div></li>)}
+        {capsule.includedEvidence.map((record) => <li key={record.id}><span className="capsule-mark ok">✓</span><div><strong>{record.claim}</strong><small>{record.sourceRefs.join(" · ")} · from {resolveAgent(record.producerAgentId)}</small></div></li>)}
         {capsule.includedEvidence.length === 0 && <li className="capsule-empty">No evidence reached this agent.</li>}
       </ul>
       {capsule.excludedEvidence.length > 0 && <div className="capsule-excluded">
         <span className="capsule-excluded-label">Excluded ({capsule.excludedEvidence.length}) — never entered this agent's input</span>
-        <ul>{capsule.excludedEvidence.map((record) => <li key={record.id}><span className="capsule-mark no">×</span><div><s>{record.claim}</s><small>from {record.producerAgentId} · {record.reasons.join("; ") || record.status}</small></div></li>)}</ul>
+        <ul>{capsule.excludedEvidence.map((record) => <li key={record.id}><span className="capsule-mark no">×</span><div><s>{record.claim}</s><small>claims to be from {resolveAgent(record.producerAgentId)} · {record.reasons.join("; ") || record.status}</small></div></li>)}</ul>
       </div>}
     </article>
   );
@@ -152,6 +159,10 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<RelaySession[]>([]);
   const [scenario, setScenario] = useState<WorkflowScenario>("normal");
+  const resolveAgentName = (id: string) =>
+    session.agentManifests?.find((agent) => agent.agentId === id)?.name
+      ?? roleAgentNames[id]
+      ?? id;
   const [goal, setGoal] = useState("");
   const [showComposer, setShowComposer] = useState(true);
   const [dismissedApprovalId, setDismissedApprovalId] = useState<string | null>(null);
@@ -248,7 +259,7 @@ export default function AgentRelayDashboard({ runtimeReady }: { runtimeReady: bo
       <MiddlewareInterventions session={session} />
       {session.contextCapsules?.length ? <section className="context-capsule-section" aria-labelledby="context-capsule-title">
         <header><div><span className="resource-panel-eyebrow">Scoped evidence propagation</span><h2 id="context-capsule-title">Context Capsules</h2><p>Each downstream agent receives only accepted evidence from its declared dependencies. Rejected and unrelated claims never enter its input.</p></div><span>{session.contextCapsules.length} capsules</span></header>
-        <div className="context-capsule-grid">{session.contextCapsules.map((capsule) => <ContextCapsuleCard key={capsule.taskId} capsule={capsule} />)}</div>
+        <div className="context-capsule-grid">{session.contextCapsules.map((capsule) => <ContextCapsuleCard key={capsule.taskId} capsule={capsule} resolveAgent={resolveAgentName} />)}</div>
       </section> : null}
       <section className="resource-governance-panel" aria-labelledby="resource-access-title">
         <header><div><span className="resource-panel-eyebrow">Deterministic control plane</span><h2 id="resource-access-title">Tool &amp; Resource Access</h2><p>Run-scoped permissions govern which protected resources each Agent may read.</p></div><span className="resource-event-count">{session.resourceAccessEvents?.length ?? 0} access events</span></header>
