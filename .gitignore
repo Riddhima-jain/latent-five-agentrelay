@@ -8,7 +8,6 @@ data/
 workspaces/
 codex-home/
 coverage/
-PERSON_1_PROGRESS.md
 *.log
 *.tsbuildinfo
 .DS_Store

@@ -56,7 +56,7 @@ The workflow dashboard displays real-Agent manifest summaries,
 protected-resource access decisions, and `RECOMMEND_ONLY` outcomes returned by
 the backend Resource Gateway. Access grants remain server/runtime-only and are
 never returned to the browser.
-See the [architecture](docs/ARCHITECTURE.md#resource-access-contract) and
+See the [architecture](docs/ARCHITECTURE.md#resource-access-boundary) and
 [threat model](docs/threat-model.md) for the implementation boundary.
 
 The trusted mock email executor is the default. An optional Resend executor can
