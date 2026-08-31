@@ -1,197 +1,274 @@
-# Volc Agent Launchpad
+# AgentRelay
 
-A minimal Agent platform for three-day middleware hackathons. It provides Agent
-CRUD, a browser Playground, persistent workspaces, and Codex CLI backed by the
-Volcengine Ark Responses API.
+AgentRelay is a policy-enforced multi-agent workflow platform for coordinating
+specialist AI Agents across research, finance, strategy, and outreach. It adds
+server-owned permissions, protected-resource access, evidence validation,
+payload-bound human approval, and exactly-once execution to a Codex-powered
+Agent runtime.
 
-Run it locally with Docker, Colima, or rootless Podman, or deploy it to
-Volcengine ECS.
+The included sales-recovery workflow demonstrates how Agents can collaborate
+without receiving unrestricted access to sensitive data or external actions.
 
-> [!WARNING]
-> This is a single-user proof of concept. It intentionally has no user identity,
-> multi-tenant authorization, or hardened sandbox boundary. Do not use production data or
-> credentials. See [SECURITY.md](SECURITY.md).
+## Demo
 
-## Screenshots
+See the [demo SOP](docs/DEMO.md) for the complete presentation flow.
 
-### Agent Playground
+## What we built
 
-![Agent Playground showing lifecycle controls, starter prompts, and the Codex Runtime](docs/assets/playground.jpg)
+AgentRelay runs a dependency-aware sales-recovery workflow:
 
-### Create an Agent
+1. Research and Finance Agents execute independently and in parallel.
+2. Their outputs pass through evidence acceptance and source checks.
+3. The Strategy Agent receives only accepted evidence from its dependencies.
+4. The Outreach Agent proposes a structured external action.
+5. Server-owned policy classifies the action and determines whether it can run.
+6. A human approves or denies the exact payload-bound action.
+7. The trusted executor performs an approved action exactly once.
+8. The dashboard presents the workflow state, evidence, access decisions,
+   approvals, receipts, and audit trace.
 
-![Create Agent form with name, description, and workspace instructions](docs/assets/create-agent.jpg)
+## Key features
 
-## Features
+- Dependency-aware multi-agent orchestration
+- Capability-based Agent routing
+- Evidence validation and provenance checks
+- Run-scoped protected-resource grants
+- Server-owned action and tool policies
+- Payload-bound human approval
+- Atomic idempotency enforcement
+- Retry, timeout, and recovery handling
+- Persistent sessions, traces, approvals, and receipts
+- Read-only policy simulation
+- Volcengine Ark and Gemini model support
+- Mock email delivery and optional Resend execution
+- Docker, Podman, Colima, and Volcengine ECS deployment paths
 
-- React and TypeScript Web UI
-- Agent create, edit, start, stop, delete, and multi-turn chat
-- Fastify control plane with asynchronous Run state
-- Persistent Agent workspaces and Codex sessions
-- Disposable Docker, Colima, or Podman container for each local turn
-- Docker and Terraform deployment paths for Volcengine ECS
+## Security guarantees
 
-## AgentRelay middleware track
+- Agent-provided risk claims never override the server-owned action registry.
+- Agents cannot approve their own protected actions.
+- The browser submits only an approval decision, not replacement action data.
+- Approval is bound to the exact action payload hash.
+- Protected resources are read through run-scoped grants and the Resource
+  Gateway.
+- Model and executor credentials remain in trusted server/runtime boundaries.
+- Unregistered, prohibited, and under-permitted actions fail closed.
+- Concurrent duplicate executions produce one external side effect.
+- Sensitive action values are redacted from persisted traces and execution
+  records.
 
-This project extends the starter platform with an AgentRelay workflow and
-approval boundary. Research, finance, strategy, and outreach tasks are routed
-by server-owned capabilities. A proposed `SEND_EMAIL` action is classified by
-the backend policy registry and cannot execute until a human approves its exact
-payload-bound hash.
+See [SECURITY.md](SECURITY.md) and the
+[threat model](docs/threat-model.md) for the detailed trust boundaries.
 
-The web dashboard can start an independent workflow with
-`POST /api/relay/sessions` and reload it with `GET /api/relay/sessions/:id`.
-It submits only `approve` or `deny` to
-`POST /api/relay/approvals/:id`; action contents and risk metadata are not
-accepted from the browser. Approval and denial events are returned in the
-session trace. Sessions, tasks, evidence, approvals, and mock execution receipts
-are persisted in `agentrelay.json` using serialized atomic writes.
+## Architecture
 
-Normal mode executes real Codex workflow participants against controlled fixture
-files. Timeout and denial scenarios exercise the same coordinator, retry,
-evidence, policy, and trace boundaries with deterministic fault triggers. See
-[the demo SOP](docs/DEMO.md) for the positive and negative paths.
+![AgentRelay architecture diagram](https://raw.githubusercontent.com/Riddhima-jain/latent-five-agentrelay/main/architecture_diagram.png)
 
-The workflow dashboard displays real-Agent manifest summaries,
-protected-resource access decisions, and `RECOMMEND_ONLY` outcomes returned by
-the backend Resource Gateway. Access grants remain server/runtime-only and are
-never returned to the browser.
-See the [architecture](docs/ARCHITECTURE.md#resource-access-boundary) and
-[threat model](docs/threat-model.md) for the implementation boundary.
+```mermaid
+flowchart LR
+    User["Human operator"] --> UI["React dashboard"]
+    UI --> API["Fastify control plane"]
+    API --> Coordinator["AgentRelay coordinator"]
+    Coordinator --> Agents["Specialist Codex Agents"]
+    Agents --> Model["Ark or Gemini"]
+    Coordinator --> Gateway["Resource Gateway"]
+    Gateway --> Fixtures["Protected resources"]
+    Coordinator --> Evidence["Evidence acceptance"]
+    Coordinator --> Policy["Capability and action policy"]
+    Policy --> Approval{"Human approval"}
+    Approval -->|Approved payload hash| Executor["Protected executor"]
+    Approval -->|Denied or invalidated| Trace["Audit trace"]
+    Executor --> Email["Mock or Resend email"]
+    Executor --> Trace
+    Coordinator --> Store["Atomic JSON workflow store"]
+```
 
-The trusted mock email executor is the default. An optional Resend executor can
-deliver only to a configured team-owned override inbox; Agent-provided recipients
-never control real delivery.
+The coordinator owns task ordering and routes each task to a registered Agent.
+The Resource Gateway evaluates protected reads against server-issued grants.
+Proposed actions are evaluated against the server-owned policy registry before
+approval or execution. The executor independently verifies approval and claims
+an atomic idempotency key before producing a side effect.
 
-## Requirements
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component contracts and
+extension boundaries.
+
+## Demo scenarios
+
+### Normal workflow
+
+Runs the complete evidence, strategy, approval, and protected-execution path.
+After approval, the mock executor creates a persisted receipt.
+
+### Policy denial
+
+The Outreach Agent proposes a controlled prohibited action. The server records
+`policy.denied`, degrades the session, and creates neither an approval request
+nor an execution receipt.
+
+### Timeout and retry
+
+The Research task encounters a controlled timeout. The coordinator records
+retry events and keeps dependent tasks blocked if recovery is exhausted.
+
+### Resource-scope breach
+
+The Research Agent attempts to read Finance data outside its run-scoped grant.
+The Resource Gateway denies the request without returning protected data.
+
+### Approval bypass protection
+
+The workflow attempts to execute `SEND_EMAIL` without a satisfied approval.
+The trusted execution boundary refuses the action.
+
+### Duplicate approval and idempotency
+
+Five concurrent executions race using the same approved action. The atomic
+ledger admits one execution, rejects four duplicates, and produces one email
+receipt.
+
+## Technology stack
+
+| Layer | Technology |
+| --- | --- |
+| Web application | React, TypeScript, Vite |
+| API and control plane | Fastify, TypeScript |
+| Agent runtime | Codex CLI |
+| Model providers | Volcengine Ark or Gemini |
+| Validation | Zod |
+| Persistence | Atomic JSON stores |
+| Tests | Vitest |
+| Local runtime | Docker, Podman, or Colima |
+| Cloud deployment | Docker and Terraform on Volcengine ECS |
+
+## Quick start
+
+### Requirements
 
 - Node.js 22+
 - npm 10+
-- Docker, Colima, or Podman
-- A Volcengine Ark API key and endpoint that supports the Responses API
+- A Volcengine Ark or Gemini API key
+- Codex CLI for direct development
+- Docker, Podman, or Colima for the containerized POC
 
-Gemini is also supported through the local Responses bridge. Set
-`MODEL_PROVIDER=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` (for example,
-`gemini-3.6-flash`). The key stays server-side and is never sent to the browser.
-
-Codex CLI is included in the Runtime image and is not required on the host.
-
-## Local browser SOP
-
-Create `.env` with only local credentials, such as `MODEL_PROVIDER`,
-`GEMINI_API_KEY`, and `GEMINI_MODEL`. The POC script loads that ignored file
-automatically; never put credentials in `.env.example`.
-
-### 1. Check the local tools
-
-Install Node.js 22+ and one supported container engine, then verify them:
+### Install
 
 ```bash
-node --version
-npm --version
-docker --version        # Docker Desktop, Docker Engine, or Colima
-podman --version        # Use this instead when running Podman
+git clone <repository-url> agentrelay
+cd agentrelay
+npm install
+cp .env.example .env
 ```
 
-Only one container engine is required. Codex CLI is already included in the
-Runtime image.
+### Configure a model provider
 
-### 2. Clone the repository
+For Volcengine Ark, set these values in `.env`:
 
-```bash
-git clone <repository-url> volc-agent-launchpad
-cd volc-agent-launchpad
-```
-
-Skip this step when already working from the repository root.
-
-### 3. Start the POC
-
-```bash
-ARK_API_KEY=your-ark-api-key \
-ARK_MODEL=ep-your-endpoint-id \
-npm run poc
+```dotenv
+ARK_API_KEY=your-ark-api-key
+ARK_MODEL=ep-your-endpoint-id
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ```
 
 For Gemini:
 
+```dotenv
+MODEL_PROVIDER=gemini
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-3.6-flash
+```
+
+Generate separate Launchpad and protected-executor tokens:
+
 ```bash
-MODEL_PROVIDER=gemini \
-GEMINI_API_KEY=your-gemini-api-key \
-GEMINI_MODEL=gemini-3.6-flash \
+openssl rand -hex 32
+openssl rand -hex 32
+```
+
+Add the two different values to `.env`:
+
+```dotenv
+APP_AUTH_TOKEN=your-launchpad-token
+AGENTRELAY_EXECUTOR_TOKEN=your-separate-executor-token
+```
+
+Never commit `.env` or place real credentials in `.env.example`.
+
+### Run in development
+
+Install the Codex CLI version used by the project:
+
+```bash
+npm install --global @openai/codex@0.111.0
+```
+
+For direct host development, use local runtime paths in `.env`:
+
+```dotenv
+APP_DATA_DIR=.data
+AGENT_WORKSPACE_ROOT=workspaces
+CODEX_HOME=codex-home
+```
+
+Start the frontend and backend together:
+
+```bash
+npm run dev
+```
+
+- Dashboard: <http://localhost:5173>
+- API: <http://localhost:3000>
+- Health check: <http://localhost:3000/api/health>
+
+Enter the value of `APP_AUTH_TOKEN` when the dashboard asks for the Launchpad
+token.
+
+### Run the containerized POC
+
+```bash
 npm run poc
 ```
 
-The first run installs Node.js dependencies and builds the Runtime image. The
-script automatically selects Docker, Colima, or Podman.
+The startup script installs dependencies, builds the Runtime image, and selects
+Docker, Colima, or Podman. Open <http://localhost:3000> when it is ready.
 
-### 4. Open the browser
-
-Visit <http://localhost:3000>, or open it from the terminal:
+Force Podman when more than one container engine is installed:
 
 ```bash
-open http://localhost:3000       # macOS
-xdg-open http://localhost:3000   # Linux desktop
+CONTAINER_ENGINE=podman npm run poc
 ```
 
-In the Web UI:
+Press `Ctrl+C` to stop the POC. Agent workspaces and conversations remain in
+the configured local data directory.
 
-1. Select **Create Agent**.
-2. Enter a name, description, and workspace instructions.
-3. Select **Create Agent** again.
-4. Enter a task in the Playground, for example:
+## Demo setup
 
-   ```text
-   Create a TypeScript hello-world CLI, add a test, and run it.
-   ```
-
-The Agent can write files, run commands, and continue the same Codex session in
-later messages.
-
-### 5. Stop and resume
-
-Press `Ctrl+C` in the startup terminal. The script removes temporary Runtime
-containers but keeps Agent workspaces and conversations.
-
-- macOS state: `~/.volc-agent-launchpad/`
-- Linux state: `.local/`
-- Custom location: set `LOCAL_POC_DATA_ROOT`
-
-Run the same `npm run poc` command to continue later.
-
-### Select a specific container engine
-
-Force Podman when multiple engines are installed:
+Provision or update the four specialist Agents through the normal Agent
+persistence path:
 
 ```bash
-CONTAINER_ENGINE=podman \
-ARK_API_KEY=your-ark-api-key \
-ARK_MODEL=ep-your-endpoint-id \
-npm run poc
+npm run seed:agentrelay-demo
 ```
 
-Colima uses `CONTAINER_ENGINE=docker` because it exposes the Docker CLI.
+The command is idempotent and prints the persisted Agent IDs. To clear workflow
+sessions, approvals, traces, execution records, and mock receipts while
+preserving the Agents and their workspaces:
 
-For a clean Linux host, follow the
-[rootless Podman setup](docs/LOCAL_POC.md#rootless-podman-on-linux).
+```bash
+npm run reset:agentrelay-demo
+```
+
+Protected inputs live under `fixtures/sales-recovery/protected/`. They are not
+copied or mounted into Agent workspaces.
 
 ## Docker Compose
 
-Create and edit the configuration:
+Create the local configuration:
 
 ```bash
 ./scripts/bootstrap-local.sh
 ```
 
-Required values in `.env`:
-
-```dotenv
-ARK_API_KEY=your-ark-api-key
-ARK_MODEL=ep-your-endpoint-id
-APP_AUTH_TOKEN=replace-with-at-least-24-random-characters
-```
-
-Start the application:
+Then start the platform:
 
 ```bash
 docker compose up --build
@@ -203,27 +280,65 @@ Open <http://localhost:3000>. Stop it without deleting Agent data:
 docker compose down
 ```
 
-## Development
+## Configuration
 
-```bash
-npm install
-cp .env.example .env
-npm install --global @openai/codex@0.111.0
-npm run dev
-```
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MODEL_PROVIDER` | `ark` | Selects the Ark or Gemini model bridge. |
+| `ARK_API_KEY` | Required for Ark | Volcengine Ark API key. |
+| `ARK_MODEL` | Required for Ark | Responses-compatible endpoint or model ID. |
+| `GEMINI_API_KEY` | Required for Gemini | Server-side Gemini API key. |
+| `GEMINI_MODEL` | Provider default | Gemini model used by the Responses bridge. |
+| `APP_AUTH_TOKEN` | Empty on loopback | Shared dashboard access token. Use 24+ characters remotely. |
+| `AGENTRELAY_EXECUTOR_TOKEN` | Required | Separate credential held by the protected executor. |
+| `EMAIL_EXECUTOR` | `mock` | Uses `mock` or the optional `resend` executor. |
+| `RUNTIME_PROVIDER` | `local-process` | Uses a local process or disposable Runtime container. |
+| `CODEX_SANDBOX_MODE` | `workspace-write` | Codex inner sandbox mode. |
+| `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one Agent turn. |
+| `APP_DATA_DIR` | `/app/data` | Session and application metadata directory. |
+| `AGENT_WORKSPACE_ROOT` | `/app/workspaces` | Persistent Agent workspace root. |
+| `LOCAL_POC_DATA_ROOT` | Platform-specific | Containerized POC state directory. |
 
-`npm run dev` loads configuration from the repository-root `.env` file before
-starting the server.
+See [.env.example](.env.example) for all model, email, runtime, resource-limit,
+and deployment settings.
 
-- Web UI: <http://localhost:5173>
-- API: <http://localhost:3000>
+## Optional Resend execution
 
-Use local paths in `.env` when running outside Docker:
+The mock email executor is the safe default. To demonstrate real delivery, use
+only a verified sender and a team-owned test inbox:
 
 ```dotenv
-APP_DATA_DIR=.data
-AGENT_WORKSPACE_ROOT=workspaces
-CODEX_HOME=codex-home
+EMAIL_EXECUTOR=resend
+RESEND_API_KEY=re_your-scoped-key
+RESEND_FROM=AgentRelay <verified-sender@example.com>
+RESEND_TO_OVERRIDE=team-owned-test-inbox@example.com
+```
+
+Agent-provided recipient addresses never control real delivery; Resend always
+uses `RESEND_TO_OVERRIDE`.
+
+## Validation
+
+```bash
+npm run check
+terraform fmt -check -recursive deploy/volcengine
+LAUNCHPAD_ENV_FILE=.env.example docker compose config
+```
+
+`npm run check` runs type checking, the server and web test suites, and both
+production builds.
+
+## Project structure
+
+```text
+apps/
+  server/                  Fastify API, coordinator, policy, and executors
+  web/                     React dashboard and policy simulator
+fixtures/
+  sales-recovery/          Controlled protected demo resources
+docs/                      Architecture, demo, security, and deployment guides
+deploy/volcengine/         Terraform configuration
+scripts/                   Local bootstrap, resource, and deployment tools
 ```
 
 ## Deployment
@@ -232,14 +347,14 @@ CODEX_HOME=codex-home
 - [Complete Volcengine environment with Terraform](docs/DEPLOYMENT.md#terraform-deployment)
 - [Local Docker, Colima, and Podman details](docs/LOCAL_POC.md)
 
-The existing-ECS script deploys from the current source tree:
+Deploy the current source tree to an existing ECS host:
 
 ```bash
 cp .env.example .env.production
 ./scripts/deploy-existing-ecs.sh .env.production
 ```
 
-The Terraform path provisions VPC, subnet, security group, ECS, and EIP:
+Provision a Volcengine environment with Terraform:
 
 ```bash
 cp deploy/volcengine/terraform.tfvars.example \
@@ -247,85 +362,15 @@ cp deploy/volcengine/terraform.tfvars.example \
 ./scripts/deploy-volcengine.sh
 ```
 
-## Configuration
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ARK_API_KEY` | Required | Ark model API key. |
-| `ARK_MODEL` | Required | Responses-capable endpoint or model ID. |
-| `ARK_BASE_URL` | Beijing v3 endpoint | Ark OpenAI-compatible API URL. |
-| `APP_AUTH_TOKEN` | Empty on loopback | Shared demo token; use 24+ random characters remotely. |
-| `RUNTIME_PROVIDER` | `local-process` | `container` for disposable local Runtime containers. |
-| `CODEX_SANDBOX_MODE` | `workspace-write` | Codex inner sandbox mode. |
-| `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
-| `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
-
-See [.env.example](.env.example) for all Runtime and resource-limit options.
-
-## AgentRelay demo bootstrap
-
-Provision or update the four specialist Agents through the normal Starter Kit
-Agent persistence path:
-
-```bash
-npm run seed:agentrelay-demo
-```
-
-The command is idempotent and prints only the real persisted Agent IDs. To clear
-AgentRelay workflow sessions, approvals, traces, and mock receipts while
-preserving Starter Kit Agents and their workspaces:
-
-```bash
-npm run reset:agentrelay-demo
-```
-
-Protected demo inputs live under `fixtures/sales-recovery/protected/`. They are
-not copied or mounted into Agent workspaces. Reads use logical resource IDs and
-run-scoped grants through the Fastify Resource Gateway.
-
-## How it works
-
-```mermaid
-flowchart LR
-    UI["React dashboard"] --> API["Fastify control plane"]
-    API --> Coordinator["AgentRelay coordinator"]
-    Coordinator --> Policy["Capability and policy checks"]
-    Coordinator --> Gateway["Resource Gateway"]
-    Coordinator --> Runtime{"Codex Runtime provider"}
-    Gateway --> Fixtures["Protected fixture resources"]
-    Runtime --> Agents["Specialist Agents"]
-    Agents --> Model["Ark or Gemini model"]
-    Agents --> Coordinator
-    Coordinator --> Approval{"Human approval"}
-    Approval -->|Approved payload hash| Executor["Protected email executor"]
-    Approval -->|Denied or expired| Trace["Audit trace"]
-    Executor --> Trace
-    Coordinator --> Store["Atomic JSON workflow store"]
-```
-
-The first turn uses `codex exec`; later turns resume the stored Codex thread.
-Deleting an Agent archives its workspace under `workspaces/.deleted/`.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component and extension
-boundaries.
-
-## Validation
-
-```bash
-npm run check
-terraform fmt -check -recursive deploy/volcengine
-docker compose config
-```
-
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
 - [Demo SOP](docs/DEMO.md)
+- [Architecture](docs/ARCHITECTURE.md)
 - [Threat model](docs/threat-model.md)
-- [Local POC](docs/LOCAL_POC.md)
-- [Deployment](docs/DEPLOYMENT.md)
-- [Hackathon extension guide](docs/HACKATHON_EXTENSION_GUIDE.md)
 - [Security policy](SECURITY.md)
+- [Local POC guide](docs/LOCAL_POC.md)
+- [Deployment guide](docs/DEPLOYMENT.md)
+- [Hackathon extension guide](docs/HACKATHON_EXTENSION_GUIDE.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
