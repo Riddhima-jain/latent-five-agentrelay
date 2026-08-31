@@ -1,4 +1,4 @@
-import type { Agent, AgentRun, Message, RelayAgentManifestView, RelaySession, SystemInfo } from "./types";
+import type { Agent, AgentRun, Message, PolicySimulationResult, RelayAgentManifestView, RelaySession, SystemInfo } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -82,6 +82,8 @@ export const api = {
     request<{ session: RelaySession }>("/api/relay/sessions/" + encodeURIComponent(id)),
   listRelaySessions: () => request<{ sessions: RelaySession[] }>("/api/relay/sessions"),
   relayManifests: () => request<{ manifests: RelayAgentManifestView[] }>("/api/relay/manifests"),
+  simulatePolicy: (body: { agentId: string; tool: "resource.read"; resource: string; operation: "read" }) =>
+    request<{ result: PolicySimulationResult }>("/api/relay/policy/simulate", { method: "POST", body: JSON.stringify(body) }),
   createRelaySession: (body: { goal?: string; scenario?: "normal" | "timeout" | "denial" | "resource_scope_breach" | "bypass_protection" | "evidence_acceptance" } = {}) =>
     request<{ session: RelaySession }>("/api/relay/sessions", { method: "POST", body: JSON.stringify(body) }),
   decideApproval: (id: string, decision: "approve" | "deny") =>

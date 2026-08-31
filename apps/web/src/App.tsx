@@ -3,6 +3,7 @@ import { api, ApiError, setAuthToken } from "./api";
 import type { Agent, AgentRun, Message, RelayAgentManifestView, SystemInfo } from "./types";
 import AgentRelayDashboard from "./AgentRelayDashboard";
 import BrandLogo from "./BrandLogo";
+import PolicySimulator from "./PolicySimulator";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -497,12 +498,12 @@ export default function App() {
               </form>
             )}
 
-            {view === "agents" ? <section className="agent-overview" aria-labelledby="agent-access-title">
+            {view === "agents" ? <><section className="agent-overview" aria-labelledby="agent-access-title">
               <header><div><span className="eyebrow">Agent identity</span><h2 id="agent-access-title">Capabilities &amp; permissions</h2></div><span className={`agent-registration-badge ${selectedManifest ? "registered" : "unregistered"}`}>{selectedManifest ? "AgentRelay registered" : "Not registered for workflows"}</span></header>
               <div className="agent-identity-grid"><div><span>Starter Kit Agent ID</span><code>{selected.id}</code></div><div><span>Runtime state</span><strong>{selected.status}</strong></div><div><span>Workspace</span><code>{selected.workspacePath}</code></div></div>
               {selectedManifest ? <div className="agent-permission-grid"><article><span>Capabilities</span><div>{selectedManifest.capabilities.map((capability) => <code key={capability}>{capability}</code>)}</div></article><article><span>Allowed tools</span><div>{selectedManifest.allowedTools.length ? selectedManifest.allowedTools.map((tool) => <code key={tool}>{tool}</code>) : <em>No protected tools</em>}</div></article><article><span>Resource scopes</span><div>{selectedManifest.resourceScopes.length ? selectedManifest.resourceScopes.map((scope) => <code key={scope}>{scope}</code>) : <em>No raw protected-resource access</em>}</div></article></div> : <div className="agent-permission-empty"><strong>This Agent can use the Playground but is not eligible for AgentRelay routing.</strong><p>Capabilities and protected-resource access are granted only through a server-owned AgentRelay manifest; creating an Agent does not grant them automatically.</p></div>}
               <div className="permission-boundary-note"><span>i</span><p><strong>Server-enforced boundary</strong> The Agent cannot change these capabilities, tools, or scopes from its prompt or workspace instructions.</p></div>
-            </section> : <section className="playground">
+            </section><PolicySimulator manifests={manifests} initialAgentId={selectedManifest?.agentId} /></> : <section className="playground">
               <div className="playground-topbar">
                 <div>
                   <span className="eyebrow">Playground</span>

@@ -38,6 +38,14 @@ describe("Relay browser API", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/relay/manifests", expect.any(Object));
   });
 
+  it("submits policy simulations to the server-owned dry-run endpoint", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ result: { decision: "DENY", dryRun: true } }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const body = { agentId: "research-agent", tool: "resource.read" as const, resource: "finance/revenue.csv", operation: "read" as const };
+    await api.simulatePolicy(body);
+    expect(fetchMock).toHaveBeenCalledWith("/api/relay/policy/simulate", expect.objectContaining({ method: "POST", body: JSON.stringify(body) }));
+  });
+
   it("surfaces server approval conflicts", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Approval already decided" }), { status: 409, headers: { "content-type": "application/json" } })));
     await expect(api.decideApproval("approval-1", "approve")).rejects.toEqual(expect.objectContaining({ status: 409, message: "Approval already decided" }));

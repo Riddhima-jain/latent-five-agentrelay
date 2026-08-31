@@ -4,6 +4,7 @@ import { SALES_RECOVERY_AGENTS, SALES_RECOVERY_TASKS } from "../domain/demo-work
 import { HttpError } from "../errors.js";
 import { InMemoryApprovalService } from "./approval-service.js";
 import { decideAutomation } from "./automation-decision-service.js";
+import { PolicySimulatorService, type PolicySimulationInput, type PolicySimulationResult } from "./policy-simulator-service.js";
 
 export type RelayTaskStatus = "waiting" | "ready" | "running" | "completed" | "failed" | "approval_required" | "denied";
 
@@ -80,11 +81,13 @@ export interface RelaySessionReader {
   listSessions(): Awaitable<RelaySessionView[]>;
   decideApproval(approvalId: string, decision: "approve" | "deny"): Awaitable<RelaySessionView>;
   listAgentManifests(): Awaitable<RelayAgentManifestView[]>;
+  simulatePolicy(input: PolicySimulationInput): Awaitable<PolicySimulationResult>;
 }
 
 /** Owns independent in-memory demo sessions while policy stays server-controlled. */
 export class DemoRelaySessionService implements RelaySessionReader {
   private readonly sessions = new Map<string, RelaySessionAggregate>();
+  private readonly policySimulator = new PolicySimulatorService();
 
   constructor(
     private readonly now: () => string = () => new Date().toISOString(),
@@ -110,6 +113,12 @@ export class DemoRelaySessionService implements RelaySessionReader {
 
   listAgentManifests(): RelayAgentManifestView[] {
     return SALES_RECOVERY_AGENTS.map((agent) => ({ agentId: agent.agentId, name: agent.name, capabilities: [...agent.capabilities], runnable: agent.runnable, allowedTools: [...(agent.toolPolicy?.allowedTools ?? [])], resourceScopes: (agent.toolPolicy?.resourceScopes ?? []).map((scope) => scope.pattern) }));
+  }
+
+  simulatePolicy(input: PolicySimulationInput): PolicySimulationResult {
+    const agent = SALES_RECOVERY_AGENTS.find((candidate) => candidate.agentId === input.agentId);
+    if (!agent) throw new HttpError(404, `Registered Agent not found: ${input.agentId}`);
+    return this.policySimulator.simulate(agent, input);
   }
 
   decideApproval(approvalId: string, decision: "approve" | "deny"): RelaySessionView {
